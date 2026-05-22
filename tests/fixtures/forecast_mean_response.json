@@ -1,0 +1,24 @@
+{
+  "schema_version": "v1",
+  "image_version": "0.2.0",
+  "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+  "checkpoint_version": "sdk-test",
+  "head": "studentt",
+  "query_mode": "forecast",
+  "return_mode": "mean",
+  "outputs": {
+    "query_times": [2],
+    "requested_columns": ["target"],
+    "mean": [
+      [12.0]
+    ],
+    "samples": null,
+    "quantiles": null
+  },
+  "diagnostics": {
+    "history_rows": 2,
+    "horizon_count": 1,
+    "seed": 7
+  },
+  "errors": []
+}

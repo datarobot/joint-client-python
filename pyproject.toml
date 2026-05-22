@@ -1,0 +1,97 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jointfm-client"
+version = "0.0.1"
+description = "A Python SDK for the JointFM REST API"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "Apache-2.0"
+keywords = ["datarobot", "forecasting", "jointfm", "sdk"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.13.4",
+    "python-dotenv>=1.2.2",
+    "pyyaml>=6.0.3",
+    "requests>=2.33.1",
+]
+
+[project.urls]
+Repository = "https://github.com/datarobot/joint-client-python"
+
+[project.scripts]
+jointfm-client = "jointfm_client.cli:main"
+
+[project.optional-dependencies]
+dataframe = [
+    "pandas>=3.0.2",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel",
+    "pre-commit",
+    "ruff",
+    "debugpy",
+    "pytest",
+    "pytest-cov",
+    "types-pyyaml",
+    "ty",
+    "numexpr",
+    "nbstripout",
+    "pandas>=3.0.2",
+]
+
+[tool.uv]
+exclude-newer = "14 days"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jointfm_client"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/.env.sample",
+    "/LICENSE",
+    "/README.md",
+    "/config.sample.yaml",
+    "/docs/api-reference.md",
+    "/pyproject.toml",
+    "/src/jointfm_client",
+]
+
+[tool.ruff]
+extend-exclude = ["private"]
+
+[tool.ruff.lint]
+select = ["D100", "D101", "D102", "D103"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/**/tests/**" = ["D100", "D101", "D102", "D103"]
+"tests/**" = ["D100", "D101", "D102", "D103"]
+"packages/*/tests/**" = ["D100", "D101", "D102", "D103"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ty]
+environment.python-version = "3.13"
+
+[tool.ty.src]
+exclude = ["build/", "dist/", "private/"]
+
+[tool.ty.rules]
+invalid-argument-type = "warn"
+possibly-missing-attribute = "warn"
+invalid-assignment = "warn"
+unresolved-import = "ignore"
+unresolved-attribute = "ignore"
+unresolved-reference = "ignore"

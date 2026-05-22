@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "errors": [
+    {
+      "code": "VALIDATION_ERROR",
+      "message": "query_times must not be empty",
+      "field": "query_times",
+      "detail": {}
+    }
+  ]
+}

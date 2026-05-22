@@ -1,0 +1,145 @@
+version: "3"
+
+set: [errexit, nounset, pipefail]
+silent: true
+
+vars:
+  TYPOS_VERSION: '{{.TYPOS_VERSION | default "1.45.1"}}'
+
+tasks:
+  default:
+    cmd: task --list --sort alphanumeric
+
+  setup:
+    desc: Create or reuse the local Python environment and install repo tooling
+    cmds:
+      - uv venv --allow-existing --python 3.13.3
+      - uv sync --all-groups
+      - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
+      - uv run pre-commit install
+      - task: install-typos
+      - cmd: 'echo "Activate virtual environment with: . .venv/bin/activate"'
+
+  lint:
+    desc: Run Ruff lint checks
+    cmd: uv run ruff check .
+
+  typecheck:
+    desc: Run ty static type checks
+    cmd: uv run ty check src tests
+
+  test:
+    desc: Run the unit test suite
+    cmd: uv run pytest
+
+  coverage:
+    desc: Run tests with coverage enforcement
+    cmd: uv run pytest --cov=jointfm_client --cov-report=term-missing --cov-fail-under=91
+
+  build:
+    desc: Build and validate the source distribution and wheel
+    cmds:
+      - uv build
+      - uv run python scripts/validate_distribution.py
+
+  release-check:
+    desc: Run the local release gate
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: coverage
+      - task: build
+
+  typos:
+    desc: Run the spelling checker
+    cmds:
+      - task: install-typos
+      - typos .
+
+  pre-commit:
+    desc: Run pre-commit hooks on all files
+    cmd: uv run pre-commit run --all-files
+
+  install-typos:
+    desc: Install typos using Homebrew when available, otherwise download a release binary with curl
+    cmds:
+      - |
+        LOCAL_TYPOS="$HOME/.local/bin/typos"
+        if command -v typos >/dev/null 2>&1; then
+          echo "typos already installed: $(command -v typos)"
+          exit 0
+        fi
+        if [ -x "$LOCAL_TYPOS" ]; then
+          echo "typos already installed: $LOCAL_TYPOS"
+          exit 0
+        fi
+        if command -v brew >/dev/null 2>&1; then
+          if brew list typos-cli >/dev/null 2>&1 || brew install typos-cli; then
+            if command -v typos >/dev/null 2>&1; then
+              echo "Installed typos via Homebrew: $(command -v typos)"
+              exit 0
+            fi
+          fi
+        fi
+        if ! command -v curl >/dev/null 2>&1; then
+          echo "curl is required to download typos automatically."
+          echo "Install curl or typos manually, then rerun: task setup"
+          exit 1
+        fi
+        if ! command -v tar >/dev/null 2>&1; then
+          echo "tar is required to unpack the typos release archive."
+          echo "Install tar or typos manually, then rerun: task setup"
+          exit 1
+        fi
+        if ! command -v install >/dev/null 2>&1; then
+          echo "install is required to place the typos binary."
+          echo "Install coreutils or typos manually, then rerun: task setup"
+          exit 1
+        fi
+        VERSION="{{.TYPOS_VERSION}}"
+        ARCH="$(uname -m)"
+        case "$ARCH" in
+          x86_64|amd64)
+            ARCH="x86_64"
+            ;;
+          arm64|aarch64)
+            ARCH="aarch64"
+            ;;
+          *)
+            echo "Unsupported typos architecture: $ARCH"
+            exit 1
+            ;;
+        esac
+        OS_NAME="$(uname -s)"
+        case "$OS_NAME" in
+          Darwin)
+            TARGET="$ARCH-apple-darwin"
+            ARCHIVE_EXT="tar.gz"
+            ;;
+          Linux)
+            TARGET="$ARCH-unknown-linux-musl"
+            ARCHIVE_EXT="tar.gz"
+            ;;
+          *)
+            echo "Unsupported typos operating system: $OS_NAME"
+            echo "This setup supports Ubuntu, AWS Linux, and macOS only."
+            exit 1
+            ;;
+        esac
+        ARCHIVE_NAME="typos-v${VERSION}-${TARGET}.${ARCHIVE_EXT}"
+        DOWNLOAD_URL="https://github.com/crate-ci/typos/releases/download/v${VERSION}/${ARCHIVE_NAME}"
+        INSTALL_DIR="$HOME/.local/bin"
+        TMP_DIR="$(mktemp -d)"
+        trap 'rm -rf "$TMP_DIR"' EXIT
+        curl -fsSL "$DOWNLOAD_URL" -o "$TMP_DIR/$ARCHIVE_NAME"
+        mkdir -p "$INSTALL_DIR"
+        tar -xzf "$TMP_DIR/$ARCHIVE_NAME" -C "$TMP_DIR"
+        install "$TMP_DIR/typos" "$INSTALL_DIR/typos"
+        echo "Installed typos to $INSTALL_DIR/typos"
+        case ":$PATH:" in
+          *":$INSTALL_DIR:"*)
+            ;;
+          *)
+            echo "Add $INSTALL_DIR to PATH if you want to invoke typos directly in new shells."
+            ;;
+        esac

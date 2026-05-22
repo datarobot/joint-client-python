@@ -1,0 +1,60 @@
+paths:
+  config: config.yaml
+  sample: config.sample.yaml
+  dotenv: .env
+environment:
+  datarobot_endpoint: DATAROBOT_ENDPOINT
+  datarobot_api_token: DATAROBOT_API_TOKEN
+  deployment_id: JOINTFM_DEPLOYMENT_ID
+  deployment_url: JOINTFM_DEPLOYMENT_URL
+  predict_url: JOINTFM_PREDICT_URL
+  deployment_target: JOINTFM_DEPLOYMENT_TARGET
+  pulumi_outputs_path: JOINTFM_PULUMI_OUTPUTS_PATH
+  schema_version: JOINTFM_SCHEMA_VERSION
+  model_version: JOINTFM_MODEL_VERSION
+deployment:
+  datarobot_endpoint: null
+  datarobot_api_token: null
+  deployment_id: null
+  deployment_url: null
+  predict_url: null
+  deployment_target: null
+  pulumi_outputs_path: null
+  schema_version: null
+  model_version: null
+transport:
+  timeout:
+    connect_seconds: 5.0
+    read_seconds: 60.0
+  retry:
+    max_attempts: 3
+    backoff_seconds: 0.25
+    status_codes:
+      - 408
+      - 429
+      - 500
+      - 502
+      - 503
+      - 504
+  response_body_excerpt_characters: 1024
+  retryable_methods:
+    - GET
+    - POST
+  datarobot_request_id_headers:
+    - X-DataRobot-Request-ID
+    - X-Request-ID
+    - X-DataRobot-Execution-ID
+  user_agent_header: User-Agent
+forecast:
+  schema_version: v1
+  query_mode: forecast
+  return_mode: mean
+  time_index_mode: ordinal
+  use_local_normalized_time: false
+  calendar_id: pandas-default
+  ordinal_step: 1
+cli:
+  dotenv_path: .env
+  forecast_csv:
+    time_index_mode: ordinal
+    return_mode: mean

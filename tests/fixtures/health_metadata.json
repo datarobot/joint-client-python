@@ -1,0 +1,18 @@
+{
+  "status": "ok",
+  "schema_version": "v1",
+  "image_version": "0.2.0",
+  "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+  "checkpoint_version": "sdk-test",
+  "checkpoint_path": "/models/jointfm.pt",
+  "device": "cpu",
+  "head": "studentt",
+  "supported_query_modes": ["forecast"],
+  "supported_return_modes": ["mean", "samples", "quantiles"],
+  "supported_time_index_modes": [
+    "ordinal",
+    "continuous_float",
+    "absolute_datetime"
+  ],
+  "time_index_encoding": "legacy_discrete_grid"
+}

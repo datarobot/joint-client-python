@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# custom
+private/
+notebooks/forecast.csv
+config.yaml

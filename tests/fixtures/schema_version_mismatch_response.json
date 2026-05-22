@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "errors": [
+    {
+      "code": "SCHEMA_VERSION_MISMATCH",
+      "message": "Unsupported schema_version: expected 'v1', got 'v2'",
+      "field": "schema_version",
+      "detail": {}
+    }
+  ]
+}

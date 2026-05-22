@@ -1,0 +1,11 @@
+{
+  "schema_version": "v1",
+  "errors": [
+    {
+      "code": "INPUT_SIZE_EXCEEDED",
+      "message": "n_samples exceeds the configured container cap: requested 4097, max 4096",
+      "field": "n_samples",
+      "detail": {}
+    }
+  ]
+}

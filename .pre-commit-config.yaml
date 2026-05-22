@@ -1,0 +1,24 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+      - id: ty-check
+        name: ty check
+        entry: uv run ty check src tests
+        language: system
+        pass_filenames: false
+      - id: typos
+        name: typos
+        entry: task typos
+        language: system
+        pass_filenames: false
+      - id: tests
+        name: tests with coverage
+        entry: env COVERAGE_FILE=/tmp/joint-client-python-pre-commit.coverage uv run pytest -q -p no:cacheprovider --cov=jointfm_client --cov-report=term-missing:skip-covered --cov-fail-under=90
+        language: system
+        pass_filenames: false
+        always_run: true

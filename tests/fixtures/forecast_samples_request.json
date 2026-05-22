@@ -1,0 +1,26 @@
+{
+  "schema_version": "v1",
+  "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+  "query_mode": "forecast",
+  "return_mode": "samples",
+  "time_index_mode": "ordinal",
+  "columns": [
+    {
+      "name": "target",
+      "modality": "numeric",
+      "role": "target"
+    }
+  ],
+  "history_rows": [
+    {
+      "target": 10.0
+    },
+    {
+      "target": 11.0
+    }
+  ],
+  "query_times": [2],
+  "requested_columns": ["target"],
+  "n_samples": 2,
+  "seed": 7
+}
