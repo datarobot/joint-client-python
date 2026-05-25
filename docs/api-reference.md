@@ -8,7 +8,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | --- | --- |
 | `JointFMClient` | Synchronous client for hosted or local JointFM endpoints. Use `from_env()` for `.env` and `config.yaml` backed hosted settings, `health()` for `/healthz`, `predict(payload)` for low-level JSON prediction, `forecast(...)` for validated tabular forecasts, and the `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` convenience methods for typed forecast results. |
 
-`JointFMClient.from_env()` loads `config.yaml`, optional `.env` values, and process environment variables. `JointFMClient.health(cache=True)` caches health metadata only when requested. `JointFMClient.predict(payload)` requires `payload["model_version"]`; high-level forecast helpers resolve the configured model version when the caller does not pass one explicitly.
+`JointFMClient.from_env()` loads `config.yaml`, optional `.env` values, and process environment variables. `JointFMClient.health(cache=True)` caches health metadata only when requested. `JointFMClient.predict(payload)` requires `payload["model_version"]`; high-level forecast helpers resolve the configured model version when the caller does not pass one explicitly. When `forecast_samples(...)` requests more samples than the service cap allows, the client discovers the cap from the structured service error, resubmits capped prediction batches, and returns one merged `SampleForecastResult`.
 
 ## Contract Classes
 
@@ -140,7 +140,7 @@ Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`
 | `query_times` | Yes | Non-empty future forecast horizon values. Absolute datetimes are encoded timezone-stably. |
 | `time_column` | For absolute datetime, optional otherwise | Name of the history time column. It must not duplicate a modeled column name. |
 | `requested_columns` | Optional | Output column names or integer indices. Duplicates are rejected. Defaults to all modeled columns. |
-| `n_samples` | Samples and quantiles controls | Positive sample count when sampling controls are needed. |
+| `n_samples` | Samples and quantiles controls | Positive sample count when sampling controls are needed. Oversized sample forecasts are batched automatically after the service reports its cap. |
 | `quantiles` | Quantiles mode | Quantile levels in `(0, 1)`, required for `return_mode="quantiles"`. |
 | `seed` | Optional | Integer random seed for reproducible stochastic outputs. |
 | `time_scale_seconds` | Optional | Positive scale for continuous time indexes. |

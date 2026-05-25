@@ -29,6 +29,7 @@ from jointfm_client import (
     JointFMSettings,
     JointFMTimeoutConfig,
     MeanForecastResult,
+    SampleForecastResult,
     UnsupportedModelVersionError,
 )
 
@@ -505,6 +506,116 @@ def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -
         "requested_columns": ["target"],
         "seed": 7,
     }
+
+
+def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> None:
+    class SampleCapTransport:
+        def __init__(self) -> None:
+            self.payloads: list[Mapping[str, Any]] = []
+            self.sample_offset = 0
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            raise AssertionError(f"unexpected health request: {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            assert url == "http://localhost:8080/predict"
+            self.payloads.append(dict(payload))
+            if len(self.payloads) == 1:
+                raise JointFMHTTPStatusError(
+                    "JointFM service returned HTTP 470",
+                    status_code=470,
+                    response_body_excerpt=(
+                        '{"message":"{\\"message\\": '
+                        '\\"Container response not 200 for k8s service route.\\", '
+                        '\\"container_response\\": {\\"message\\": '
+                        '\\"ERROR: n_samples exceeds the configured container cap: '
+                        'requested 5, max 2\\"}}"}'
+                    ),
+                    datarobot_request_id="request-id",
+                )
+
+            sample_count = payload["n_samples"]
+            assert isinstance(sample_count, int)
+            samples = [
+                [[float(sample_index)]]
+                for sample_index in range(
+                    self.sample_offset,
+                    self.sample_offset + sample_count,
+                )
+            ]
+            self.sample_offset += sample_count
+            response_payload = _forecast_response_payload(return_mode="samples")
+            outputs = response_payload["outputs"]
+            assert isinstance(outputs, dict)
+            outputs["samples"] = samples
+            diagnostics = response_payload["diagnostics"]
+            assert isinstance(diagnostics, dict)
+            diagnostics["seed"] = payload.get("seed")
+            return response_payload
+
+    transport = SampleCapTransport()
+    client = JointFMClient(
+        predict_url="http://localhost:8080/predict",
+        transport=transport,
+    )
+    schema = DataFrameSchema(
+        columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+        time_index_mode="ordinal",
+    )
+
+    result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        n_samples=5,
+        seed=7,
+    )
+
+    assert isinstance(result, SampleForecastResult)
+    assert result.samples == (
+        ((0.0,),),
+        ((1.0,),),
+        ((2.0,),),
+        ((3.0,),),
+        ((4.0,),),
+    )
+    assert result.diagnostics.seed == 7
+    assert [payload["n_samples"] for payload in transport.payloads] == [5, 2, 2, 1]
+    assert [payload["seed"] for payload in transport.payloads] == [7, 7, 8, 9]
+
+    second_result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        n_samples=3,
+        seed=11,
+    )
+
+    assert second_result.samples == (
+        ((5.0,),),
+        ((6.0,),),
+        ((7.0,),),
+    )
+    assert [payload["n_samples"] for payload in transport.payloads] == [
+        5,
+        2,
+        2,
+        1,
+        2,
+        1,
+    ]
+    assert [payload["seed"] for payload in transport.payloads] == [
+        7,
+        7,
+        8,
+        9,
+        11,
+        12,
+    ]
 
 
 def test_client_predict_raises_typed_service_error_for_success_payload_errors() -> None:

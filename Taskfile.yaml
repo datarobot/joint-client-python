@@ -26,7 +26,7 @@ tasks:
 
   typecheck:
     desc: Run ty static type checks
-    cmd: uv run ty check src tests
+    cmd: uv run ty check
 
   test:
     desc: Run the unit test suite
@@ -54,7 +54,7 @@ tasks:
     desc: Run the spelling checker
     cmds:
       - task: install-typos
-      - typos .
+      - typos --config typos.toml --force-exclude --sort .
 
   pre-commit:
     desc: Run pre-commit hooks on all files

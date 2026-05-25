@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+import re
 from typing import Any, Self, cast
 from urllib.parse import urlparse
 
@@ -30,10 +31,12 @@ from jointfm_client.contract import (
 )
 from jointfm_client.exceptions import (
     JointFMConfigurationError,
+    JointFMHTTPStatusError,
     JointFMServiceError,
     UnsupportedModelVersionError,
 )
 from jointfm_client.contract import (
+    ForecastDiagnostics,
     ForecastResponse,
     MeanForecastResult,
     QuantileForecastResult,
@@ -49,6 +52,11 @@ from jointfm_client.transport import (
     JointFMHTTPTransport,
     JointFMRetryConfig,
     JointFMTimeoutConfig,
+)
+
+_SAMPLE_CAP_ERROR_PATTERN = re.compile(
+    r"n_samples exceeds the configured container cap:\s*"
+    r"requested\s+(?P<requested>[0-9]+),\s*max\s+(?P<cap>[0-9]+)"
 )
 
 
@@ -84,6 +92,7 @@ class JointFMClient:
         self._response_body_excerpt_characters = response_body_excerpt_characters
         self._datarobot_request_id_headers = datarobot_request_id_headers
         self._health_metadata: HealthMetadata | None = None
+        self._sample_batch_cap: int | None = None
 
     @classmethod
     def from_env(
@@ -241,18 +250,20 @@ class JointFMClient:
                 nullable_columns=nullable_columns,
                 bounds=bounds,
             )
-        response_payload = self._transport_for_request().post_json(predict_url, payload)
+        sample_cap = _known_sample_batch_cap(payload, self._sample_batch_cap)
+        if sample_cap is not None:
+            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+
         try:
-            return ForecastResponse.from_payload(
-                response_payload,
-                request_payload=payload,
-            )
-        except JointFMServiceError:
-            raise
-        except ValueError as error:
-            raise JointFMServiceError(
-                f"JointFM forecast response violated the V1 contract: {error}"
-            ) from error
+            response_payload = self._transport_for_request().post_json(predict_url, payload)
+        except JointFMHTTPStatusError as error:
+            sample_cap = _sample_batch_cap_from_error(error, payload)
+            if sample_cap is None:
+                raise
+            self._sample_batch_cap = sample_cap
+            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+
+        return _forecast_response_from_payload(response_payload, payload)
 
     def forecast_mean(
         self,
@@ -399,6 +410,46 @@ class JointFMClient:
             seed=seed,
             schema_version=schema_version,
         )
+
+    def _forecast_sample_batches(
+        self,
+        predict_url: str,
+        payload: Mapping[str, Any],
+        sample_cap: int,
+    ) -> SampleForecastResult:
+        requested_samples = cast(int, payload["n_samples"])
+        remaining_samples = requested_samples
+        batch_index = 0
+        batch_results: list[SampleForecastResult] = []
+
+        while remaining_samples > 0:
+            batch_samples = min(sample_cap, remaining_samples)
+            batch_payload = dict(payload)
+            batch_payload["n_samples"] = batch_samples
+            _set_batch_seed(batch_payload, batch_index)
+            response_payload = self._transport_for_request().post_json(
+                predict_url,
+                batch_payload,
+            )
+            batch_result = _forecast_response_from_payload(
+                response_payload,
+                batch_payload,
+            )
+            if not isinstance(batch_result, SampleForecastResult):
+                raise JointFMServiceError(
+                    "JointFM forecast response violated the V1 contract: "
+                    "sample batching requires sample forecast responses"
+                )
+            batch_results.append(batch_result)
+            remaining_samples -= batch_samples
+            batch_index += 1
+
+        try:
+            return _merge_sample_forecast_results(batch_results, payload)
+        except ValueError as error:
+            raise JointFMServiceError(
+                f"JointFM forecast response violated the V1 contract: {error}"
+            ) from error
 
     def _require_settings(self, method_name: str) -> JointFMSettings:
         if self.settings is None:
@@ -562,3 +613,166 @@ def _resolve_datarobot_request_id_headers(
 
 def _is_history_row_sequence(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray)
+
+
+def _forecast_response_from_payload(
+    response_payload: Mapping[str, Any],
+    request_payload: Mapping[str, Any],
+) -> ForecastResponse:
+    try:
+        return ForecastResponse.from_payload(
+            response_payload,
+            request_payload=request_payload,
+        )
+    except JointFMServiceError:
+        raise
+    except ValueError as error:
+        raise JointFMServiceError(
+            f"JointFM forecast response violated the V1 contract: {error}"
+        ) from error
+
+
+def _sample_batch_cap_from_error(
+    error: JointFMHTTPStatusError,
+    payload: Mapping[str, Any],
+) -> int | None:
+    requested_samples = _requested_sample_count(payload)
+    if requested_samples is None:
+        return None
+
+    cap_details = _sample_cap_details_from_error(error)
+    if cap_details is None:
+        return None
+    reported_requested_samples, sample_cap = cap_details
+    if reported_requested_samples != requested_samples:
+        return None
+    if requested_samples <= sample_cap:
+        return None
+    return sample_cap
+
+
+def _known_sample_batch_cap(
+    payload: Mapping[str, Any],
+    sample_cap: int | None,
+) -> int | None:
+    if sample_cap is None:
+        return None
+    requested_samples = _requested_sample_count(payload)
+    if requested_samples is None:
+        return None
+    if requested_samples <= sample_cap:
+        return None
+    return sample_cap
+
+
+def _requested_sample_count(payload: Mapping[str, Any]) -> int | None:
+    if payload.get("return_mode") != "samples":
+        return None
+    requested_samples = payload.get("n_samples")
+    if isinstance(requested_samples, bool) or not isinstance(requested_samples, int):
+        return None
+    return requested_samples
+
+
+def _sample_cap_details_from_error(
+    error: JointFMHTTPStatusError,
+) -> tuple[int, int] | None:
+    for jointfm_error in error.jointfm_errors:
+        message = jointfm_error.get("message")
+        if isinstance(message, str):
+            cap_details = _sample_cap_details_from_text(message)
+            if cap_details is not None:
+                return cap_details
+    return _sample_cap_details_from_text(error.response_body_excerpt)
+
+
+def _sample_cap_details_from_text(text: str) -> tuple[int, int] | None:
+    match = _SAMPLE_CAP_ERROR_PATTERN.search(text)
+    if match is None:
+        return None
+    requested_samples = int(match.group("requested"))
+    sample_cap = int(match.group("cap"))
+    if sample_cap < 1:
+        return None
+    return requested_samples, sample_cap
+
+
+def _set_batch_seed(batch_payload: dict[str, Any], batch_index: int) -> None:
+    seed = batch_payload.get("seed")
+    if seed is None:
+        return
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        return
+    batch_payload["seed"] = seed + batch_index
+
+
+def _merge_sample_forecast_results(
+    batch_results: Sequence[SampleForecastResult],
+    request_payload: Mapping[str, Any],
+) -> SampleForecastResult:
+    if not batch_results:
+        raise ValueError("sample batching produced no responses")
+
+    first_result = batch_results[0]
+    merged_samples = tuple(
+        sample_values
+        for batch_result in batch_results
+        for sample_values in batch_result.samples
+    )
+    _validate_sample_batch_results(batch_results, first_result)
+    requested_samples = cast(int, request_payload["n_samples"])
+    if len(merged_samples) != requested_samples:
+        raise ValueError(
+            "sample batching produced the wrong sample count: "
+            f"expected {requested_samples}, got {len(merged_samples)}"
+        )
+
+    seed = request_payload.get("seed")
+    diagnostics_seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else None
+    return SampleForecastResult(
+        schema_version=first_result.schema_version,
+        image_version=first_result.image_version,
+        model_version=first_result.model_version,
+        checkpoint_version=first_result.checkpoint_version,
+        head=first_result.head,
+        query_mode=first_result.query_mode,
+        return_mode=first_result.return_mode,
+        query_times=first_result.query_times,
+        requested_columns=first_result.requested_columns,
+        diagnostics=ForecastDiagnostics(
+            history_rows=first_result.diagnostics.history_rows,
+            horizon_count=first_result.diagnostics.horizon_count,
+            seed=diagnostics_seed,
+        ),
+        errors=(),
+        samples=merged_samples,
+    )
+
+
+def _validate_sample_batch_results(
+    batch_results: Sequence[SampleForecastResult],
+    first_result: SampleForecastResult,
+) -> None:
+    for batch_result in batch_results[1:]:
+        if batch_result.schema_version != first_result.schema_version:
+            raise ValueError("sample batch schema_version mismatch")
+        if batch_result.image_version != first_result.image_version:
+            raise ValueError("sample batch image_version mismatch")
+        if batch_result.model_version != first_result.model_version:
+            raise ValueError("sample batch model_version mismatch")
+        if batch_result.checkpoint_version != first_result.checkpoint_version:
+            raise ValueError("sample batch checkpoint_version mismatch")
+        if batch_result.head != first_result.head:
+            raise ValueError("sample batch head mismatch")
+        if batch_result.query_mode != first_result.query_mode:
+            raise ValueError("sample batch query_mode mismatch")
+        if batch_result.return_mode != first_result.return_mode:
+            raise ValueError("sample batch return_mode mismatch")
+        if batch_result.query_times != first_result.query_times:
+            raise ValueError("sample batch query_times mismatch")
+        if batch_result.requested_columns != first_result.requested_columns:
+            raise ValueError("sample batch requested_columns mismatch")
+        if batch_result.diagnostics.history_rows != first_result.diagnostics.history_rows:
+            raise ValueError("sample batch history_rows mismatch")
+        if batch_result.diagnostics.horizon_count != first_result.diagnostics.horizon_count:
+            raise ValueError("sample batch horizon_count mismatch")

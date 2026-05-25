@@ -1,0 +1,273 @@
+# `docs/LANGUAGE.md` remains the source of truth for separator-based house
+# style rules that typos cannot encode mechanically, like `pre-training` vs
+# `pretraining`. Typos still runs across the full repository to catch repo-wide
+# terminology and locale changes.
+
+[files]
+extend-exclude = [
+    ".env",
+    ".git",
+    ".venv",
+    ".pytest_cache",
+    "__pycache__",
+    "config.yaml",
+    "private",
+    "docs/latex/paper/references.bib",
+    "logs",
+    "results",
+    "runs",
+    "wandb",
+    "**/.mypy_cache",
+    "**/.ruff_cache",
+    "**/node_modules",
+    "**/*.gif",
+    "**/*.ipynb",
+    "**/*.jpeg",
+    "**/*.jpg",
+    "**/*.pdf",
+    "**/*.png",
+    "**/*.pt",
+    "**/*.svg",
+]
+ignore-hidden = false
+ignore-files = false
+ignore-dot = false
+ignore-vcs = false
+ignore-global = false
+ignore-parent = false
+
+[default]
+locale = "en-us"
+extend-ignore-re = [
+    "Organisation for Economic Co-operation and Development",
+    "On the behaviour of commodity prices\\.",
+]
+
+[default.extend-words]
+"ALiBi" = "ALiBi"
+"Alos" = "Alos"
+"AutoGluon" = "AutoGluon"
+"Barndorff" = "Barndorff"
+"BLOK" = "BLOK"
+"Clarabel" = "Clarabel"
+"Commere" = "Commere"
+"DataRobot" = "DataRobot"
+"DroPE" = "DroPE"
+"Fonctions" = "Fonctions"
+"GARCH" = "GARCH"
+"GatedDeltaNet" = "GatedDeltaNet"
+"GatedDeltaProduct" = "GatedDeltaProduct"
+"Gatheral" = "Gatheral"
+"Gelberg" = "Gelberg"
+"Hawkes" = "Hawkes"
+"Hashi" = "Hashi"
+"HashiCorp" = "HashiCorp"
+"Heros" = "Heros"
+"IHS" = "IHS"
+"JointFM" = "JointFM"
+"LLM" = "LLM"
+"Labourers" = "Labourers"
+"Linz" = "Linz"
+"Lyapunov" = "Lyapunov"
+"MAPE" = "MAPE"
+"Mamba" = "Mamba"
+"McCullagh" = "McCullagh"
+"Megatron" = "Megatron"
+"Modelling" = "Modelling"
+"NCE" = "NCE"
+"ND" = "ND"
+"NaN" = "NaN"
+"Nie" = "Nie"
+"Nielsen" = "Nielsen"
+"Openin" = "Openin"
+"OT" = "OT"
+"PatchTST" = "PatchTST"
+"QuantLib" = "QuantLib"
+"RIN" = "RIN"
+"RealNVP" = "RealNVP"
+"RoPE" = "RoPE"
+"SAV" = "SAV"
+"SDEs" = "SDEs"
+"SOM" = "SOM"
+"TARFLOW" = "TARFLOW"
+"TIO" = "TIO"
+"TempoPFN" = "TempoPFN"
+"Yor" = "Yor"
+"autoregressive" = "autoregressive"
+"ba" = "ba"
+"backtest" = "backtest"
+"backtests" = "backtests"
+"cointegrated" = "cointegrated"
+"cointegration" = "cointegration"
+"comovement" = "comovement"
+"comovements" = "comovements"
+"cooldown" = "cooldown"
+"covariates" = "covariates"
+"cuda" = "cuda"
+"dataset" = "dataset"
+"datasets" = "datasets"
+"downstream" = "downstream"
+"dtype" = "dtype"
+"entrypoint" = "entrypoint"
+"entrypoints" = "entrypoints"
+"exogeneity" = "exogeneity"
+"finetune" = "finetune"
+"finetuned" = "finetuned"
+"finetuning" = "finetuning"
+"fonctions" = "fonctions"
+"hoc" = "hoc"
+"hyperparameter" = "hyperparameter"
+"hyperparameters" = "hyperparameters"
+"mis" = "mis"
+"mergeable" = "mergeable"
+"metadata" = "metadata"
+"missingness" = "missingness"
+"multimodal" = "multimodal"
+"multimodality" = "multimodality"
+"multitask" = "multitask"
+"nd" = "nd"
+"ot" = "ot"
+"parallelizable" = "parallelizable"
+"parameterizations" = "parameterizations"
+"pretrain" = "pretrain"
+"pretrained" = "pretrained"
+"pretraining" = "pretraining"
+"regularizer" = "regularizer"
+"relevent" = "relevent"
+"rollout" = "rollout"
+"rollouts" = "rollouts"
+"stationarity" = "stationarity"
+"subsampling" = "subsampling"
+"sulphates" = "sulphates"
+"swappable" = "swappable"
+"timescale" = "timescale"
+"timescales" = "timescales"
+"timeseries" = "time series"
+"timestep" = "timestep"
+"timesteps" = "timesteps"
+"unpatch" = "unpatch"
+"upstream" = "upstream"
+"VARX" = "VARX"
+"varn" = "varn"
+"Widnow" = "Widnow"
+
+"analysed" = "analyzed"
+"analyse" = "analyze"
+"artefact" = "artifact"
+"artefacts" = "artifacts"
+"behaviour" = "behavior"
+"behaviours" = "behaviors"
+"categorise" = "categorize"
+"favour" = "favor"
+"fulfilment" = "fulfillment"
+"initialise" = "initialize"
+"initialised" = "initialized"
+"labelling" = "labeling"
+"labelled" = "labeled"
+"maximise" = "maximize"
+"maximised" = "maximized"
+"minimise" = "minimize"
+"minimised" = "minimized"
+"modelling" = "modeling"
+"modelled" = "modeled"
+"normalisation" = "normalization"
+"normalise" = "normalize"
+"normalised" = "normalized"
+"optimisation" = "optimization"
+"optimise" = "optimize"
+"optimised" = "optimized"
+"organisation" = "organization"
+"organise" = "organize"
+"organised" = "organized"
+"organising" = "organizing"
+"prioritise" = "prioritize"
+"prioritised" = "prioritized"
+"serialise" = "serialize"
+"specialise" = "specialize"
+"stabilise" = "stabilize"
+"stabilised" = "stabilized"
+
+[default.extend-identifiers]
+"ALiBi" = "ALiBi"
+"BLOK" = "BLOK"
+"CLARABEL" = "CLARABEL"
+"Commere" = "Commere"
+"Fonctions" = "Fonctions"
+"Hashi" = "Hashi"
+"HashiCorp" = "HashiCorp"
+"Labourers" = "Labourers"
+"MAPE" = "MAPE"
+"Modelling" = "Modelling"
+"ND" = "ND"
+"Openin" = "Openin"
+"OT" = "OT"
+"SAV" = "SAV"
+"SOM" = "SOM"
+"TIO" = "TIO"
+"AutoGluon" = "AutoGluon"
+"DataRobot" = "DataRobot"
+"DroPE" = "DroPE"
+"GARCH" = "GARCH"
+"GatedDeltaNet" = "GatedDeltaNet"
+"GatedDeltaProduct" = "GatedDeltaProduct"
+"JointFM" = "JointFM"
+"jointfm" = "jointfm"
+"LLM" = "LLM"
+"NaN" = "NaN"
+"PatchTST" = "PatchTST"
+"QuantLib" = "QuantLib"
+"RealNVP" = "RealNVP"
+"RoPE" = "RoPE"
+"SDEs" = "SDEs"
+"TARFLOW" = "TARFLOW"
+"TempoPFN" = "TempoPFN"
+"VARX" = "VARX"
+"cuda" = "cuda"
+"dataset" = "dataset"
+"datasets" = "datasets"
+"downstream" = "downstream"
+"dtype" = "dtype"
+"entrypoint" = "entrypoint"
+"entrypoints" = "entrypoints"
+"finetune" = "finetune"
+"finetuned" = "finetuned"
+"finetuning" = "finetuning"
+"fonctions" = "fonctions"
+"hyperparameter" = "hyperparameter"
+"hyperparameters" = "hyperparameters"
+"arange" = "arange"
+"ba" = "ba"
+"is_unitialized" = "is_unitialized"
+"metadata" = "metadata"
+"multimodal" = "multimodal"
+"multimodality" = "multimodality"
+"multitask" = "multitask"
+"nd" = "nd"
+"ot" = "ot"
+"pretrain" = "pretrain"
+"pretrained" = "pretrained"
+"pretraining" = "pretraining"
+"relevent" = "relevent"
+"rollout" = "rollout"
+"rollouts" = "rollouts"
+"sulphates" = "sulphates"
+"timescale" = "timescale"
+"timescales" = "timescales"
+"timestep" = "timestep"
+"timesteps" = "timesteps"
+"upstream" = "upstream"
+"varn" = "varn"
+"Widnow" = "Widnow"
+
+[type.md]
+extend-ignore-re = [
+    "(?s)```.*?```",
+    "`[^`\\n]+`",
+]
+
+[type.tex]
+extend-ignore-re = [
+    "\\\\cite[a-zA-Z*]*\\{[^}]+\\}",
+    "\\\\setsansfont\\{[^}]+\\}",
+    "\\\\textit\\{[^}]+\\}",
+]

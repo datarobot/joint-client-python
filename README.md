@@ -157,6 +157,7 @@ The current V1 forecast request contract is:
 - `time_column`: required for `"absolute_datetime"`, and used for ordered ordinal or continuous histories when supplied
 - `query_times`: non-empty future forecast times only
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
+- `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds a service-reported sample cap, `forecast_samples(...)` automatically resubmits capped prediction batches and returns one merged `SampleForecastResult`.
 
 V1 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
