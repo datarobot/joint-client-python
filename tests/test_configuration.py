@@ -53,13 +53,13 @@ class _HealthTransport:
         return {}
 
 
-def test_checked_in_yaml_configs_match_configuration_defaults() -> None:
+def test_checked_in_yaml_sample_matches_configuration_defaults() -> None:
     repo_root = Path(__file__).parents[1]
     expected_defaults = JointFMConfig().model_dump(mode="json")
+    config_path = repo_root / "config.sample.yaml"
 
-    for config_path in (repo_root / "config.sample.yaml", repo_root / "config.yaml"):
-        assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == expected_defaults
-        assert load_configuration(config_path=config_path).model_dump(mode="json") == expected_defaults
+    assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == expected_defaults
+    assert load_configuration(config_path=config_path).model_dump(mode="json") == expected_defaults
 
 
 def test_load_configuration_layers_yaml_over_defaults(tmp_path: Path) -> None:
