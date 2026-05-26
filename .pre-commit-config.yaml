@@ -1,3 +1,6 @@
+fail_fast: true
+exclude: ^private/
+
 repos:
   - repo: local
     hooks:
