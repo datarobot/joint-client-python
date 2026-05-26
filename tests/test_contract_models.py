@@ -138,6 +138,34 @@ def test_request_models_reject_direct_validation_edges() -> None:
         )
 
 
+def test_column_spec_serializes_one_sided_bounds() -> None:
+    lower_only = ColumnSpec(
+        name="price_floor",
+        modality="numeric",
+        role="target",
+        lower_bound=0.0,
+    )
+    upper_only = ColumnSpec(
+        name="inventory_cap",
+        modality="numeric",
+        role="target",
+        upper_bound=100.0,
+    )
+
+    assert lower_only.to_payload() == {
+        "name": "price_floor",
+        "modality": "numeric",
+        "role": "target",
+        "lower_bound": 0.0,
+    }
+    assert upper_only.to_payload() == {
+        "name": "inventory_cap",
+        "modality": "numeric",
+        "role": "target",
+        "upper_bound": 100.0,
+    }
+
+
 def test_response_helper_models_parse_direct_payloads() -> None:
     error = StructuredError.from_payload(
         {
@@ -299,6 +327,42 @@ def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
             mismatched_diagnostics,
             request_payload=request_payload,
         )
+
+
+def test_forecast_response_rejects_sample_bound_violations() -> None:
+    request_payload = {
+        "schema_version": "v1",
+        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "query_mode": "forecast",
+        "return_mode": "samples",
+        "time_index_mode": "ordinal",
+        "columns": [
+            {
+                "name": "target",
+                "modality": "numeric",
+                "role": "target",
+                "lower_bound": 0.0,
+                "upper_bound": 20.0,
+            }
+        ],
+        "query_times": [1],
+        "requested_columns": ["target"],
+        "n_samples": 1,
+    }
+
+    valid_response = _sample_response_payload()
+    result = ForecastResponse.from_payload(valid_response, request_payload=request_payload)
+    assert result.outputs.samples == (((12.0,),),)
+
+    below_lower_bound = _sample_response_payload()
+    below_lower_bound["outputs"]["samples"] = [[[-1.0]]]
+    with pytest.raises(ValueError, match="violates requested lower_bound"):
+        ForecastResponse.from_payload(below_lower_bound, request_payload=request_payload)
+
+    above_upper_bound = _sample_response_payload()
+    above_upper_bound["outputs"]["samples"] = [[[21.0]]]
+    with pytest.raises(ValueError, match="violates requested upper_bound"):
+        ForecastResponse.from_payload(above_upper_bound, request_payload=request_payload)
 
 
 def _mean_response_payload() -> dict[str, Any]:

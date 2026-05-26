@@ -7,7 +7,20 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Any
 
-from jointfm_client import ColumnSpec, DataFrameSchema, JointFMClient, JointFMSettings
+import pytest
+
+from jointfm_client import (
+    ColumnSpec,
+    DataFrameSchema,
+    JointFMClient,
+    JointFMServiceError,
+    JointFMSettings,
+)
+
+
+class _SurfaceHandlerBase(BaseHTTPRequestHandler):
+    requests: list[dict[str, Any]]
+    route_map: Mapping[tuple[str, str], tuple[HTTPStatus, Mapping[str, Any]]]
 
 
 def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
@@ -99,10 +112,50 @@ def test_local_surface_uses_direct_service_routes_without_hosted_auth(
         server.server_close()
 
 
+def test_local_surface_rejects_samples_below_requested_lower_bound(
+    json_fixture_loader: Callable[[str], dict[str, Any]],
+) -> None:
+    response_payload = json_fixture_loader("forecast_samples_response")
+    response_payload["outputs"]["samples"] = [[[-0.5]], [[12.5]]]
+    server, handler = _start_surface_server(
+        {("POST", "/predict"): (HTTPStatus.OK, response_payload)}
+    )
+    try:
+        base_url = _server_base_url(server)
+        client = JointFMClient(predict_url=f"{base_url}/predict")
+        schema = DataFrameSchema(
+            columns=(
+                ColumnSpec(
+                    name="target",
+                    modality="numeric",
+                    role="target",
+                    lower_bound=0.0,
+                ),
+            ),
+            time_index_mode="ordinal",
+        )
+
+        with pytest.raises(JointFMServiceError, match="lower_bound"):
+            client.forecast_samples(
+                [{"target": 10.0}, {"target": 11.0}],
+                schema=schema,
+                query_times=[2],
+                requested_columns=["target"],
+                model_version=response_payload["model_version"],
+                n_samples=2,
+                seed=7,
+            )
+
+        assert handler.requests[0]["body"]["columns"][0]["lower_bound"] == 0.0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def _start_surface_server(
     routes: Mapping[tuple[str, str], tuple[HTTPStatus, Mapping[str, Any]]],
-) -> tuple[ThreadingHTTPServer, type[BaseHTTPRequestHandler]]:
-    class SurfaceHandler(BaseHTTPRequestHandler):
+) -> tuple[ThreadingHTTPServer, type[_SurfaceHandlerBase]]:
+    class SurfaceHandler(_SurfaceHandlerBase):
         requests: list[dict[str, Any]] = []
         route_map = routes
 

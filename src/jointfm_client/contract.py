@@ -699,6 +699,12 @@ class ForecastResponse:
                 f"expected {list(expectations.requested_columns)!r}, "
                 f"got {list(outputs.requested_columns)!r}"
             )
+        if return_mode == "samples" and outputs.samples is not None:
+            _validate_sample_bounds(
+                outputs.samples,
+                outputs.requested_columns,
+                request_payload,
+            )
 
         shared_fields = {
             "schema_version": schema_version,
@@ -1260,6 +1266,71 @@ def _forecast_response_expectations(
         if quantiles_value is None
         else tuple(_require_quantiles(quantiles_value)),
     )
+
+
+def _validate_sample_bounds(
+    samples: tuple[tuple[tuple[float, ...], ...], ...],
+    requested_columns: Sequence[str],
+    request_payload: Mapping[str, Any] | None,
+) -> None:
+    if request_payload is None:
+        return
+
+    bounds_by_column = _sample_bounds_by_column_name(request_payload)
+    if not bounds_by_column:
+        return
+
+    for requested_column_index, requested_column in enumerate(requested_columns):
+        bounds = bounds_by_column.get(requested_column)
+        if bounds is None:
+            continue
+        lower_bound, upper_bound = bounds
+        for sample_index, sample_values in enumerate(samples):
+            for horizon_index, horizon_values in enumerate(sample_values):
+                value = horizon_values[requested_column_index]
+                field = (
+                    f"outputs.samples[{sample_index}][{horizon_index}]"
+                    f"[{requested_column_index}]"
+                )
+                if lower_bound is not None and value < lower_bound:
+                    raise ValueError(
+                        f"{field} violates requested lower_bound for column "
+                        f"{requested_column!r}: {value} < {lower_bound}"
+                    )
+                if upper_bound is not None and value > upper_bound:
+                    raise ValueError(
+                        f"{field} violates requested upper_bound for column "
+                        f"{requested_column!r}: {value} > {upper_bound}"
+                    )
+
+
+def _sample_bounds_by_column_name(
+    request_payload: Mapping[str, Any],
+) -> dict[str, tuple[float | None, float | None]]:
+    columns_value = request_payload.get("columns")
+    if columns_value is None:
+        return {}
+
+    columns = _require_sequence(columns_value, field="request_payload.columns")
+    bounds_by_column: dict[str, tuple[float | None, float | None]] = {}
+    for column_index, column_value in enumerate(columns):
+        field = f"request_payload.columns[{column_index}]"
+        column = _require_mapping(column_value, field=field)
+        column_name = _require_string(column.get("name"), field=f"{field}.name")
+        lower_bound = _optional_float(
+            column.get("lower_bound"),
+            field=f"{field}.lower_bound",
+        )
+        upper_bound = _optional_float(
+            column.get("upper_bound"),
+            field=f"{field}.upper_bound",
+        )
+        if lower_bound is None and upper_bound is None:
+            continue
+        if lower_bound is not None and upper_bound is not None and lower_bound > upper_bound:
+            raise ValueError(f"{field}.lower_bound must be less than or equal to upper_bound")
+        bounds_by_column[column_name] = (lower_bound, upper_bound)
+    return bounds_by_column
 
 
 def _raise_for_response_errors(payload: Mapping[str, Any]) -> None:
