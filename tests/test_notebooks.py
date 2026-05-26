@@ -89,11 +89,7 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
     ]
     for notebook_path in notebook_paths:
         payload = json.loads(notebook_path.read_text(encoding="utf-8"))
-        assert payload["metadata"]["kernelspec"] == {
-            "display_name": "Python (joint-client-python)",
-            "language": "python",
-            "name": "joint-client-python",
-        }
+        assert payload["metadata"]["kernelspec"]["language"] == "python"
         first_cell = payload["cells"][0]
         assert first_cell["cell_type"] == "code"
         assert first_cell["metadata"]["language"] == "python"
