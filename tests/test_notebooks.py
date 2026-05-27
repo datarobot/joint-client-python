@@ -35,6 +35,26 @@ def test_resolve_notebook_project_root_from_nested_dir(
     assert resolve_notebook_project_root() == repo_root
 
 
+def test_resolve_notebook_project_root_from_foreign_src_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_root = tmp_path / "instant-portfolio-optimization"
+    notebook_dir = repo_root / "notebooks"
+
+    (repo_root / "src" / "ipo").mkdir(parents=True)
+    notebook_dir.mkdir()
+    (repo_root / "Taskfile.yml").write_text("version: '3'\n", encoding="utf-8")
+    (repo_root / "pyproject.toml").write_text(
+        "[project]\nname = 'instant-portfolio-optimization'\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(notebook_dir)
+
+    assert resolve_notebook_project_root() == repo_root
+
+
 def test_bootstrap_notebook_changes_dir_and_adds_src_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

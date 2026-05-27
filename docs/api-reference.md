@@ -104,8 +104,8 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `build_ordinal_query_times(history_times, periods=..., step=1)` | Build future ordinal query times from ordered history times. |
 | `build_continuous_query_times(history_times, periods=..., step=...)` | Build future continuous-float query times from ordered history times. |
 | `validate_forecast_horizon(history_times, query_times, time_index_mode=...)` | Validate that query times are future, increasing, and encoded for the selected time-index mode. |
-| `resolve_notebook_project_root(start_dir=None)` | Resolve the SDK repository root for notebooks started inside the workspace. |
-| `bootstrap_notebook(add_src_root=False)` | Switch notebook working directory to the SDK root and optionally prepend the local `src` directory. |
+| `resolve_notebook_project_root(start_dir=None)` | Resolve the nearest src-layout Python project root for notebooks started inside a repository tree. |
+| `bootstrap_notebook(add_src_root=False)` | Switch notebook working directory to the project root and optionally prepend the local `src` directory. |
 
 ## Environment Variables
 

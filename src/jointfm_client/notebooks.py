@@ -1,4 +1,4 @@
-"""Notebook bootstrap helpers for the JointFM client workspace."""
+"""Notebook bootstrap helpers for src-layout Python workspaces."""
 
 from __future__ import annotations
 
@@ -7,19 +7,23 @@ import sys
 from pathlib import Path
 from typing import Final
 
-WORKSPACE_ROOT_MARKERS: Final[tuple[str, ...]] = (
-    "pyproject.toml",
-    "Taskfile.yaml",
-    "src/jointfm_client",
-)
+PYPROJECT_MARKER: Final[str] = "pyproject.toml"
+SRC_ROOT_MARKER: Final[str] = "src"
+WORKSPACE_ROOT_MARKERS: Final[tuple[str, ...]] = (PYPROJECT_MARKER, SRC_ROOT_MARKER)
+
+
+def _is_src_layout_project_root(candidate: Path) -> bool:
+    return (candidate / PYPROJECT_MARKER).is_file() and (
+        candidate / SRC_ROOT_MARKER
+    ).is_dir()
 
 
 def resolve_notebook_project_root(start_dir: str | Path | None = None) -> Path:
-    """Return the SDK workspace root for a notebook started inside the repo tree."""
+    """Return the src-layout project root for a notebook started inside a repo tree."""
     current_dir = Path.cwd().resolve() if start_dir is None else Path(start_dir).resolve()
 
     for candidate in (current_dir, *current_dir.parents):
-        if all((candidate / marker).exists() for marker in WORKSPACE_ROOT_MARKERS):
+        if _is_src_layout_project_root(candidate):
             return candidate
 
     raise FileNotFoundError(
@@ -29,7 +33,7 @@ def resolve_notebook_project_root(start_dir: str | Path | None = None) -> Path:
 
 
 def bootstrap_notebook(*, add_src_root: bool = False) -> Path:
-    """Set notebook cwd to the repo root and optionally prepend the root ``src`` path."""
+    """Set notebook cwd to the project root and optionally prepend its ``src`` path."""
     current_dir = Path.cwd().resolve()
     project_root = resolve_notebook_project_root(current_dir)
 
