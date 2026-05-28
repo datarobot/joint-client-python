@@ -149,10 +149,17 @@ class JointFMHTTPTransport:
         response_body_excerpt_characters: int = DEFAULT_RESPONSE_BODY_EXCERPT_CHARACTERS,
         datarobot_request_id_headers: Sequence[str] = DATAROBOT_REQUEST_ID_HEADERS,
     ) -> "JointFMHTTPTransport":
-        """Create an authenticated hosted DataRobot transport from SDK settings."""
+        """Create an HTTP transport from hosted or local SDK settings."""
+        headers = None
+        if settings.deployment_selector != "local_service":
+            if settings.datarobot_api_token is None:
+                raise JointFMConfigurationError(
+                    "hosted JointFM settings require a DataRobot API token"
+                )
+            headers = build_datarobot_prediction_headers(settings.datarobot_api_token)
         return cls(
             session=session,
-            headers=build_datarobot_prediction_headers(settings.datarobot_api_token),
+            headers=headers,
             timeout=timeout,
             retry_config=retry_config,
             user_agent=user_agent,

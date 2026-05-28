@@ -86,6 +86,7 @@ from jointfm_client.settings import (
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
+    JOINTFM_LOCAL_BASE_URL_ENV,
     JOINTFM_MODEL_VERSION_ENV,
     JOINTFM_PREDICT_URL_ENV,
     JOINTFM_PULUMI_OUTPUTS_PATH_ENV,
@@ -106,6 +107,7 @@ from jointfm_client.settings import (
     normalize_deployment_id,
     normalize_hosted_deployment_url,
     normalize_hosted_predict_url,
+    normalize_local_service_base_url,
     validate_datarobot_api_token,
 )
 from jointfm_client.transport import (
@@ -145,6 +147,7 @@ __all__ = [
     "JOINTFM_DEPLOYMENT_ID_ENV",
     "JOINTFM_DEPLOYMENT_TARGET_ENV",
     "JOINTFM_DEPLOYMENT_URL_ENV",
+    "JOINTFM_LOCAL_BASE_URL_ENV",
     "JOINTFM_MODEL_VERSION_ENV",
     "JOINTFM_PREDICT_URL_ENV",
     "JOINTFM_PULUMI_OUTPUTS_PATH_ENV",
@@ -215,6 +218,7 @@ __all__ = [
     "normalize_deployment_id",
     "normalize_hosted_deployment_url",
     "normalize_hosted_predict_url",
+    "normalize_local_service_base_url",
     "resolve_notebook_project_root",
     "validate_datarobot_api_token",
     "validate_forecast_horizon",

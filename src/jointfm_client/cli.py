@@ -56,7 +56,7 @@ def _single_line(value: str) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jointfm-client",
-        description="Call a DataRobot-hosted JointFM deployment from the terminal.",
+        description="Call a hosted or local JointFM service from the terminal.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -145,6 +145,7 @@ def _health_command(args: argparse.Namespace, stdout: TextIO) -> int:
             "deployment_id": client.settings.deployment_id,
             "deployment_url": client.settings.deployment_url,
             "deployment_target": client.settings.deployment_target,
+            "local_base_url": client.settings.local_base_url,
             "health_url": client.settings.health_url,
             "predict_url": client.settings.predict_url,
         }

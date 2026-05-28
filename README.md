@@ -38,11 +38,11 @@ The direct local service exposes `GET /healthz` and `POST /predict`.
 
 Structured SDK defaults live in `jointfm_client.configuration.JointFMConfig` and are mirrored in the checked-in `config.sample.yaml`. Copy `config.sample.yaml` to `config.yaml` and change only the fields needed for your deployment or transport defaults. `JointFMClient.from_env()` and `load_settings()` read `config.yaml` by default, then layer `.env` values over it, then layer process environment variables or the supplied `env` mapping over both. Explicit Python arguments such as `timeout=` and `retry_config=` still override YAML transport defaults.
 
-`JointFMClient.from_env()` and `load_settings()` resolve `DATAROBOT_ENDPOINT`, `DATAROBOT_API_TOKEN`, `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one deployment selector from that layered configuration. Missing credentials, missing version pins, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
+`JointFMClient.from_env()` and `load_settings()` resolve `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one service selector from that layered configuration. Hosted selectors also require `DATAROBOT_ENDPOINT` and `DATAROBOT_API_TOKEN`; the direct local selector does not use DataRobot credentials. Missing credentials, missing version pins, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
 
 `DATAROBOT_ENDPOINT` must be a normalized HTTPS DataRobot API v2 URL ending in `/api/v2`; the SDK stores it without a trailing slash. `DATAROBOT_API_TOKEN` must be non-empty and whitespace-free. The token is excluded from `JointFMSettings` repr output.
 
-Required `.env` entries for hosted SDK calls are `DATAROBOT_ENDPOINT`, `DATAROBOT_API_TOKEN`, `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one SDK deployment selector from the list below. `.env` is the right place for these pins when using `from_env()` because they describe the selected JointFM deployment rather than a package-wide default. They are not secrets, and callers can still override them with process environment variables. Optional live DataRobot smoke tests additionally read `DATAROBOT_DEPLOYMENT_ID` from `.env` and use it as the hosted deployment ID for the `deployments/{deployment_id}/predictionsUnstructured` route.
+Required `.env` entries for hosted SDK calls are `DATAROBOT_ENDPOINT`, `DATAROBOT_API_TOKEN`, `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one hosted selector from the list below. Required `.env` entries for local REST calls are `JOINTFM_LOCAL_BASE_URL`, `JOINTFM_SCHEMA_VERSION`, and `JOINTFM_MODEL_VERSION`. `.env` is the right place for these pins when using `from_env()` because they describe the selected JointFM service rather than a package-wide default. They are not secrets, and callers can still override them with process environment variables. Optional live DataRobot smoke tests additionally read `DATAROBOT_DEPLOYMENT_ID` from `.env` and use it as the hosted deployment ID for the `deployments/{deployment_id}/predictionsUnstructured` route.
 
 Example deployment configuration:
 
@@ -72,12 +72,21 @@ JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 ```
 
-Choose exactly one deployment selector:
+Equivalent local REST configuration for a service started from the `joint` repository with `task service:start CONFIG=nvidia-studentt-m4cr2`:
+
+```dotenv
+JOINTFM_LOCAL_BASE_URL=http://127.0.0.1:8080
+JOINTFM_SCHEMA_VERSION=v1
+JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
+```
+
+Choose exactly one service selector:
 
 - `JOINTFM_DEPLOYMENT_ID`: builds `DATAROBOT_ENDPOINT.rstrip("/") + "/"` plus `deployments/{deployment_id}/predictionsUnstructured`
 - `JOINTFM_DEPLOYMENT_URL`: appends `/predictionsUnstructured` to a hosted deployment URL
 - `JOINTFM_PREDICT_URL`: uses a full hosted prediction URL ending in `/predictionsUnstructured`
 - `JOINTFM_DEPLOYMENT_TARGET` with `JOINTFM_PULUMI_OUTPUTS_PATH`: resolves a named target from saved Pulumi outputs JSON, preferring `deployment_id`, then `deployment_url`, then `predict_url`
+- `JOINTFM_LOCAL_BASE_URL`: builds direct local `GET /healthz` and `POST /predict` URLs without DataRobot authentication
 
 Pulumi deployment discovery is explicit and file-backed. Export stack outputs to a JSON object keyed by target name, then set `JOINTFM_DEPLOYMENT_TARGET` to the key and `JOINTFM_PULUMI_OUTPUTS_PATH` to that JSON file:
 
@@ -103,7 +112,7 @@ Hosted prediction calls use the same authorization scheme as the notebook helper
 
 The SDK still decodes hosted prediction responses as JSON; the broad `Accept` value avoids hosted unstructured prediction content negotiation failures before the deployment body is returned.
 
-Direct local URL helpers remain separate: `build_local_health_url("http://localhost:8080")` returns `/healthz`, and `build_local_predict_url("http://localhost:8080")` returns `/predict`.
+Direct local URL helpers are used by the local service selector: `build_local_health_url("http://localhost:8080")` returns `/healthz`, and `build_local_predict_url("http://localhost:8080")` returns `/predict`.
 
 Hosted settings also derive `health_url` from the resolved deployment URL as `deployments/{deployment_id}/healthz`. `JointFMClient.health(cache=True)` stores typed `HealthMetadata` only when the caller asks for caching, and `JointFMClient.refresh_health()` fetches a fresh copy.
 

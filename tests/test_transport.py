@@ -225,6 +225,30 @@ def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session
     assert session.closed is True
 
 
+def test_transport_from_local_settings_omits_hosted_auth_headers() -> None:
+    session = requests.Session()
+    settings = JointFMSettings(
+        datarobot_endpoint=None,
+        datarobot_api_token=None,
+        health_url="http://127.0.0.1:8080/healthz",
+        predict_url="http://127.0.0.1:8080/predict",
+        deployment_selector="local_service",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.local-test",
+        local_base_url="http://127.0.0.1:8080",
+    )
+    transport = JointFMHTTPTransport.from_settings(session=session, settings=settings)
+    adapter = StaticResponseAdapter(_response(body=b'{"ok": true}'))
+    session.mount("http://", adapter)
+
+    result = transport.get_json("http://127.0.0.1:8080/healthz")
+
+    assert result == {"ok": True}
+    request_headers = dict(adapter.requests[0].headers or {})
+    assert "Authorization" not in request_headers
+    assert request_headers["User-Agent"] == "jointfm-client/0.0.1"
+
+
 def test_transport_retries_retryable_server_responses() -> None:
     server, handler = _start_json_server([HTTPStatus.SERVICE_UNAVAILABLE, HTTPStatus.OK])
     try:

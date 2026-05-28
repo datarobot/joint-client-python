@@ -35,7 +35,7 @@ class PathConfig(_ConfigModel):
 
 
 class EnvironmentVariableConfig(_ConfigModel):
-    """Environment variable names consumed by hosted SDK settings."""
+    """Environment variable names consumed by SDK settings."""
 
     datarobot_endpoint: str = "DATAROBOT_ENDPOINT"
     datarobot_api_token: str = "DATAROBOT_API_TOKEN"
@@ -43,6 +43,7 @@ class EnvironmentVariableConfig(_ConfigModel):
     deployment_url: str = "JOINTFM_DEPLOYMENT_URL"
     predict_url: str = "JOINTFM_PREDICT_URL"
     deployment_target: str = "JOINTFM_DEPLOYMENT_TARGET"
+    local_base_url: str = "JOINTFM_LOCAL_BASE_URL"
     pulumi_outputs_path: str = "JOINTFM_PULUMI_OUTPUTS_PATH"
     schema_version: str = "JOINTFM_SCHEMA_VERSION"
     model_version: str = "JOINTFM_MODEL_VERSION"
@@ -54,18 +55,19 @@ class EnvironmentVariableConfig(_ConfigModel):
             raise ValueError("environment variable names must be non-empty and whitespace-free")
         return value
 
-    def deployment_selector_names(self) -> tuple[str, str, str, str]:
-        """Return the environment names that select one hosted deployment."""
+    def deployment_selector_names(self) -> tuple[str, str, str, str, str]:
+        """Return the environment names that select one service target."""
         return (
             self.deployment_id,
             self.deployment_url,
             self.predict_url,
             self.deployment_target,
+            self.local_base_url,
         )
 
 
 class HostedDeploymentConfig(_ConfigModel):
-    """Optional hosted deployment values layered below .env and process env."""
+    """Optional service target values layered below .env and process env."""
 
     datarobot_endpoint: str | None = None
     datarobot_api_token: str | None = Field(default=None, repr=False)
@@ -73,6 +75,7 @@ class HostedDeploymentConfig(_ConfigModel):
     deployment_url: str | None = None
     predict_url: str | None = None
     deployment_target: str | None = None
+    local_base_url: str | None = None
     pulumi_outputs_path: str | None = None
     schema_version: str | None = None
     model_version: str | None = None
@@ -89,6 +92,7 @@ class HostedDeploymentConfig(_ConfigModel):
         _set_if_configured(values, environment.deployment_url, self.deployment_url)
         _set_if_configured(values, environment.predict_url, self.predict_url)
         _set_if_configured(values, environment.deployment_target, self.deployment_target)
+        _set_if_configured(values, environment.local_base_url, self.local_base_url)
         _set_if_configured(values, environment.pulumi_outputs_path, self.pulumi_outputs_path)
         _set_if_configured(values, environment.schema_version, self.schema_version)
         _set_if_configured(values, environment.model_version, self.model_version)
@@ -297,6 +301,7 @@ JOINTFM_DEPLOYMENT_ID_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_id
 JOINTFM_DEPLOYMENT_URL_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_url
 JOINTFM_PREDICT_URL_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.predict_url
 JOINTFM_DEPLOYMENT_TARGET_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_target
+JOINTFM_LOCAL_BASE_URL_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.local_base_url
 JOINTFM_PULUMI_OUTPUTS_PATH_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.pulumi_outputs_path
 JOINTFM_SCHEMA_VERSION_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.schema_version
 JOINTFM_MODEL_VERSION_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.model_version
@@ -367,6 +372,7 @@ __all__ = [
     "JOINTFM_DEPLOYMENT_ID_ENV",
     "JOINTFM_DEPLOYMENT_TARGET_ENV",
     "JOINTFM_DEPLOYMENT_URL_ENV",
+    "JOINTFM_LOCAL_BASE_URL_ENV",
     "JOINTFM_MODEL_VERSION_ENV",
     "JOINTFM_PREDICT_URL_ENV",
     "JOINTFM_PULUMI_OUTPUTS_PATH_ENV",

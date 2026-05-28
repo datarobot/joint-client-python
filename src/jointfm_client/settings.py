@@ -20,6 +20,7 @@ from jointfm_client.configuration import (
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
+    JOINTFM_LOCAL_BASE_URL_ENV,
     JOINTFM_MODEL_VERSION_ENV,
     JOINTFM_PREDICT_URL_ENV,
     JOINTFM_PULUMI_OUTPUTS_PATH_ENV,
@@ -40,15 +41,16 @@ DeploymentSelector: TypeAlias = Literal[
     "deployment_url",
     "predict_url",
     "pulumi_target",
+    "local_service",
 ]
 
 
 @dataclass(frozen=True, slots=True)
 class JointFMSettings:
-    """Validated settings for one DataRobot-hosted JointFM deployment."""
+    """Validated settings for one hosted or local JointFM service target."""
 
-    datarobot_endpoint: str
-    datarobot_api_token: str = field(repr=False)
+    datarobot_endpoint: str | None
+    datarobot_api_token: str | None = field(repr=False)
     health_url: str
     predict_url: str
     deployment_selector: DeploymentSelector
@@ -57,6 +59,7 @@ class JointFMSettings:
     deployment_id: str | None = None
     deployment_url: str | None = None
     deployment_target: str | None = None
+    local_base_url: str | None = None
 
 
 def load_settings(
@@ -66,7 +69,7 @@ def load_settings(
     config_path: str | Path | None = DEFAULT_CONFIG_PATH,
     config: JointFMConfig | Mapping[str, Any] | None = None,
 ) -> JointFMSettings:
-    """Load and validate DataRobot-hosted JointFM settings."""
+    """Load and validate hosted or local JointFM settings."""
 
     jointfm_config = load_configuration(config_path=config_path, overrides=config)
     environment = jointfm_config.environment
@@ -75,12 +78,6 @@ def load_settings(
         env=env,
         dotenv_path=dotenv_path,
     )
-    datarobot_endpoint = normalize_datarobot_endpoint(
-        _required_env(env_values, environment.datarobot_endpoint)
-    )
-    datarobot_api_token = validate_datarobot_api_token(
-        _required_env(env_values, environment.datarobot_api_token)
-    )
     schema_version = validate_jointfm_schema_version(
         _required_env(env_values, environment.schema_version)
     )
@@ -88,6 +85,28 @@ def load_settings(
         _required_env(env_values, environment.model_version)
     )
     selector_name = _resolve_single_deployment_selector(env_values, environment)
+
+    if selector_name == environment.local_base_url:
+        local_base_url = normalize_local_service_base_url(
+            _required_env(env_values, environment.local_base_url)
+        )
+        return JointFMSettings(
+            datarobot_endpoint=None,
+            datarobot_api_token=None,
+            health_url=build_local_health_url(local_base_url),
+            predict_url=build_local_predict_url(local_base_url),
+            deployment_selector="local_service",
+            schema_version=schema_version,
+            model_version=model_version,
+            local_base_url=local_base_url,
+        )
+
+    datarobot_endpoint = normalize_datarobot_endpoint(
+        _required_env(env_values, environment.datarobot_endpoint)
+    )
+    datarobot_api_token = validate_datarobot_api_token(
+        _required_env(env_values, environment.datarobot_api_token)
+    )
 
     if selector_name == environment.deployment_id:
         deployment_id = normalize_deployment_id(
@@ -378,6 +397,29 @@ def build_local_predict_url(service_base_url: str) -> str:
     return _build_local_service_url(service_base_url, LOCAL_PREDICT_ROUTE)
 
 
+def normalize_local_service_base_url(value: str) -> str:
+    """Validate and normalize a direct local JointFM service base URL."""
+
+    normalized_url = _normalize_non_whitespace_string(
+        value,
+        JOINTFM_LOCAL_BASE_URL_ENV,
+    ).rstrip("/")
+    parsed_url = urlparse(normalized_url)
+    if parsed_url.scheme not in {"http", "https"}:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_LOCAL_BASE_URL_ENV} must be an http or https URL"
+        )
+    if not parsed_url.netloc:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_LOCAL_BASE_URL_ENV} must include a hostname"
+        )
+    if parsed_url.params or parsed_url.query or parsed_url.fragment:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_LOCAL_BASE_URL_ENV} must not include params, query, or fragment"
+        )
+    return normalized_url
+
+
 def build_datarobot_prediction_headers(api_token: str) -> dict[str, str]:
     """Build hosted prediction headers using the notebook authorization scheme."""
 
@@ -504,13 +546,7 @@ def _normalize_absolute_https_url(value: str, env_name: str) -> str:
 
 
 def _build_local_service_url(service_base_url: str, route: str) -> str:
-    base_url = _normalize_non_whitespace_string(service_base_url, "service_base_url")
-    parsed_url = urlparse(base_url)
-    if parsed_url.scheme not in {"http", "https"}:
-        raise JointFMConfigurationError("service_base_url must be an http or https URL")
-    if not parsed_url.netloc:
-        raise JointFMConfigurationError("service_base_url must include a hostname")
-    return f"{base_url.rstrip('/')}{route}"
+    return f"{normalize_local_service_base_url(service_base_url)}{route}"
 
 
 def _normalize_non_whitespace_string(value: str, name: str) -> str:

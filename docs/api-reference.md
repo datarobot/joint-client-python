@@ -32,11 +32,11 @@ This reference covers the supported public Python surface exported by `jointfm_c
 
 | Name | Purpose |
 | --- | --- |
-| `JointFMSettings` | Validated hosted deployment settings: normalized DataRobot endpoint, secret token, health and prediction URLs, deployment selector, schema pin, model pin, and optional selector details. The API token is excluded from `repr`. |
+| `JointFMSettings` | Validated hosted or local service settings: optional normalized DataRobot endpoint, optional secret token, health and prediction URLs, service selector, schema pin, model pin, and optional selector details. The API token is excluded from `repr`. |
 | `JointFMConfig` | Top-level structured configuration loaded from defaults, YAML, and explicit overrides. |
 | `PathConfig` | Default local file names for `config.yaml`, `config.sample.yaml`, and `.env`. |
 | `EnvironmentVariableConfig` | Environment variable names consumed by settings loading. |
-| `HostedDeploymentConfig` | Optional hosted deployment values layered below `.env` and process environment variables. |
+| `HostedDeploymentConfig` | Optional service target values layered below `.env` and process environment variables. |
 | `TransportConfig` | Default HTTP transport settings: timeouts, retry policy, response excerpt length, retryable methods, DataRobot request-id headers, and user-agent header. |
 | `TimeoutConfig` | YAML-backed connect and read timeout values. |
 | `RetryConfig` | YAML-backed retry attempts, backoff, and retryable HTTP status codes. |
@@ -77,12 +77,13 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | Name | Purpose |
 | --- | --- |
 | `load_configuration(config_path=..., overrides=...)` | Load structured SDK configuration from defaults, optional YAML, and explicit overrides. |
-| `load_settings(env=..., dotenv_path=..., config_path=..., config=...)` | Load and validate hosted DataRobot settings from configuration, `.env`, and environment values. |
+| `load_settings(env=..., dotenv_path=..., config_path=..., config=...)` | Load and validate hosted DataRobot or direct local REST settings from configuration, `.env`, and environment values. |
 | `normalize_datarobot_endpoint(value)` | Validate and normalize a DataRobot API v2 endpoint ending in `/api/v2`. |
 | `validate_datarobot_api_token(value)` | Validate a non-empty, whitespace-free token without exposing it. |
 | `normalize_deployment_id(value)` | Validate a deployment ID as one non-empty path segment. |
 | `normalize_hosted_deployment_url(value)` | Validate a hosted deployment URL ending in `/deployments/{deployment_id}`. |
 | `normalize_hosted_predict_url(value)` | Validate a hosted prediction URL ending in `/predictionsUnstructured`. |
+| `normalize_local_service_base_url(value)` | Validate a direct local JointFM service base URL. |
 | `build_hosted_deployment_url(datarobot_endpoint, deployment_id)` | Build `.../deployments/{deployment_id}` from the DataRobot endpoint. |
 | `build_hosted_predict_url(datarobot_endpoint, deployment_id)` | Build the hosted `predictionsUnstructured` URL from the DataRobot endpoint and deployment ID. |
 | `build_hosted_health_url(datarobot_endpoint, deployment_id)` | Build the hosted health URL from the DataRobot endpoint and deployment ID. |
@@ -120,9 +121,10 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JOINTFM_PREDICT_URL` | One selector | Full hosted prediction URL ending in `/predictionsUnstructured`; the SDK derives the owning deployment URL. |
 | `JOINTFM_DEPLOYMENT_TARGET` | One selector with outputs path | Key in a saved Pulumi outputs JSON file. |
 | `JOINTFM_PULUMI_OUTPUTS_PATH` | With target selector | JSON file containing target outputs with exactly one of `deployment_id`, `deployment_url`, or `predict_url`. |
+| `JOINTFM_LOCAL_BASE_URL` | One selector | Direct local JointFM REST service base URL. The SDK calls `GET /healthz` and `POST /predict` without DataRobot authorization. |
 | `DATAROBOT_DEPLOYMENT_ID` | Optional live tests | Hosted deployment ID used only by the optional live smoke test so normal CI does not call DataRobot accidentally. |
 
-Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, and `JOINTFM_DEPLOYMENT_TARGET`.
+Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, `JOINTFM_DEPLOYMENT_TARGET`, and `JOINTFM_LOCAL_BASE_URL`.
 
 ## V1 Payload Fields
 

@@ -8,6 +8,7 @@ from jointfm_client import (
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
+    JOINTFM_LOCAL_BASE_URL_ENV,
     JOINTFM_MODEL_VERSION_ENV,
     JOINTFM_PREDICT_URL_ENV,
     JOINTFM_PULUMI_OUTPUTS_PATH_ENV,
@@ -59,6 +60,26 @@ def test_load_settings_from_environment_with_deployment_id_builds_hosted_url() -
         "deployment-id/predictionsUnstructured"
     )
     assert "secret-token" not in repr(settings)
+
+
+def test_load_settings_with_local_service_base_url_builds_direct_urls() -> None:
+    settings = load_settings(
+        env={
+            JOINTFM_LOCAL_BASE_URL_ENV: "http://127.0.0.1:8080/",
+            JOINTFM_SCHEMA_VERSION_ENV: "v1",
+            JOINTFM_MODEL_VERSION_ENV: "jointfm-inference:0.2.0+ckpt.local-test",
+        },
+        dotenv_path=None,
+    )
+
+    assert settings.deployment_selector == "local_service"
+    assert settings.datarobot_endpoint is None
+    assert settings.datarobot_api_token is None
+    assert settings.deployment_id is None
+    assert settings.deployment_url is None
+    assert settings.local_base_url == "http://127.0.0.1:8080"
+    assert settings.health_url == "http://127.0.0.1:8080/healthz"
+    assert settings.predict_url == "http://127.0.0.1:8080/predict"
 
 
 def test_load_settings_with_deployment_url_selector_builds_prediction_url() -> None:
@@ -166,6 +187,8 @@ def test_load_settings_rejects_missing_credentials_without_defaults() -> None:
             env={
                 DATAROBOT_API_TOKEN_ENV: "secret-token",
                 JOINTFM_DEPLOYMENT_ID_ENV: "deployment-id",
+                JOINTFM_SCHEMA_VERSION_ENV: "v1",
+                JOINTFM_MODEL_VERSION_ENV: "jointfm-inference:0.2.0+ckpt.sdk-test",
             },
             dotenv_path=None,
         )
@@ -175,6 +198,8 @@ def test_load_settings_rejects_missing_credentials_without_defaults() -> None:
             env={
                 DATAROBOT_ENDPOINT_ENV: "https://app.datarobot.com/api/v2",
                 JOINTFM_DEPLOYMENT_ID_ENV: "deployment-id",
+                JOINTFM_SCHEMA_VERSION_ENV: "v1",
+                JOINTFM_MODEL_VERSION_ENV: "jointfm-inference:0.2.0+ckpt.sdk-test",
             },
             dotenv_path=None,
         )
@@ -218,6 +243,12 @@ def test_load_settings_requires_exactly_one_deployment_selector() -> None:
                     )
                 }
             ),
+            dotenv_path=None,
+        )
+
+    with pytest.raises(JointFMConfigurationError, match="deployment selector"):
+        load_settings(
+            env=_hosted_env(**{JOINTFM_LOCAL_BASE_URL_ENV: "http://127.0.0.1:8080"}),
             dotenv_path=None,
         )
 
