@@ -19,6 +19,11 @@ repos:
         entry: task typos
         language: system
         pass_filenames: false
+      - id: nbstripout
+        name: nbstripout
+        entry: uv run nbstripout
+        language: system
+        types: [jupyter]
       - id: tests
         name: tests with coverage
         entry: env COVERAGE_FILE=/tmp/joint-client-python-pre-commit.coverage uv run pytest -q -p no:cacheprovider --cov=jointfm_client --cov-report=term-missing:skip-covered --cov-fail-under=90
