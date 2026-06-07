@@ -1,1 +1,1 @@
-Agents must run `task pre-commit` and fix all reported issues before reporting success to the user.
+Agents must explain what each command will do and why it is being run before running it. Agents must run `task pre-commit` and fix all reported issues before reporting success to the user. After `task pre-commit` succeeds, show the diff and explain why each change is necessary before reporting success to the user.
