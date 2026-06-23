@@ -104,8 +104,10 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
         "forecast_mean.ipynb",
         "forecast_quantiles.ipynb",
         "forecast_samples.ipynb",
+        "forecast_trading.ipynb",
         "pandas_result_conversion.ipynb",
         "predict_json.ipynb",
+        "service_health.ipynb",
     ]
     for notebook_path in notebook_paths:
         payload = json.loads(notebook_path.read_text(encoding="utf-8"))

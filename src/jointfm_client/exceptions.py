@@ -28,6 +28,10 @@ class JointFMConfigurationError(JointFMError):
     """Raised when local settings or deployment selection are invalid."""
 
 
+class JointFMCapacityError(JointFMConfigurationError):
+    """Raised when a planned forecast exceeds the deployed model's capacity envelope."""
+
+
 class JointFMTransportError(JointFMError):
     """Base class for HTTP transport and response errors."""
 

@@ -508,7 +508,7 @@ def _require_pandas() -> Any:
         import pandas as pandas_module
     except ImportError as error:  # pragma: no cover - exercised only without extra
         raise RuntimeError(
-            "pandas support requires installing jointfm-client[dataframe]"
+            "pandas support requires installing jointfm-client[notebooks]"
         ) from error
     return pandas_module
 
@@ -519,7 +519,7 @@ def _require_numpy() -> Any:
         import numpy as numpy_module
     except ImportError as error:  # pragma: no cover - exercised only without pandas
         raise RuntimeError(
-            "NumPy array support requires installing jointfm-client[dataframe]"
+            "NumPy array support requires installing jointfm-client[notebooks]"
         ) from error
     return numpy_module
 

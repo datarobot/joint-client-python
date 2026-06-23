@@ -15,7 +15,10 @@ class FakeHealthClient:
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
-        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/healthz",
+        health_url=(
+            "https://app.datarobot.com/api/v2/deployments/"
+            "deployment-id/predictionsUnstructured"
+        ),
         predict_url=(
             "https://app.datarobot.com/api/v2/deployments/"
             "deployment-id/predictionsUnstructured"
@@ -37,13 +40,15 @@ class FakeHealthClient:
             device="cpu",
             head="studentt",
             supported_query_modes=("forecast",),
-            supported_return_modes=("mean", "samples", "quantiles"),
+            supported_return_modes=("mean", "samples", "quantiles", "log_prob"),
             supported_time_index_modes=(
                 "ordinal",
                 "continuous_float",
                 "absolute_datetime",
             ),
             time_index_encoding="legacy_discrete_grid",
+            default_sample_count=256,
+            max_sample_count=4096,
         )
 
 

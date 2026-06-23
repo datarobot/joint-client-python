@@ -6,7 +6,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 
 | Name | Purpose |
 | --- | --- |
-| `JointFMClient` | Synchronous client for hosted or local JointFM endpoints. Use `from_env()` for `.env` and `config.yaml` backed hosted settings, `health()` for `/healthz`, `predict(payload)` for low-level JSON prediction, `forecast(...)` for validated tabular forecasts, and the `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` convenience methods for typed forecast results. |
+| `JointFMClient` | Synchronous client for hosted or local JointFM endpoints. Use `from_env()` for `.env` and `config.yaml` backed hosted settings, `health()` for typed service metadata, `predict(payload)` for low-level JSON prediction, `forecast(...)` for validated tabular forecasts, and the `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` convenience methods for typed forecast results. `health()` probes `GET /healthz` for local deployments and POSTs `{"request_type": "health"}` to `predict_url` for hosted DataRobot deployments because the DataRobot deployment gateway only proxies the unstructured prediction route. |
 
 `JointFMClient.from_env()` loads `config.yaml`, optional `.env` values, and process environment variables. `JointFMClient.health(cache=True)` caches health metadata only when requested. `JointFMClient.predict(payload)` requires `payload["model_version"]`; high-level forecast helpers resolve the configured model version when the caller does not pass one explicitly. When `forecast_samples(...)` requests more samples than the service cap allows, the client discovers the cap from the structured service error, resubmits capped prediction batches, and returns one merged `SampleForecastResult`.
 
@@ -18,7 +18,9 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | `DataFrameSchema` | Describes tabular history layout. Fields are `columns`, `time_index_mode`, `time_column`, `time_scale_seconds`, `use_local_normalized_time`, `calendar_id`, and `timezone`. |
 | `ForecastRequestMetadata` | Holds `schema_version`, `model_version`, `query_mode`, and `return_mode` for one forecast request. |
 | `ForecastRequest` | Validated request object that combines metadata, schema, history rows, query times, requested columns, sample or quantile controls, and `seed`, then emits a JSON-compatible payload with `to_payload()`. |
-| `HealthMetadata` | Typed `/healthz` payload with service status, schema and model versions, checkpoint metadata, device, head, advertised modes, and time-index encoding. |
+| `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, advertised modes, time-index encoding, `default_sample_count`, `max_sample_count`, and an optional `data_generation` block carrying advertised capacity limits. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. |
+| `DataGenerationCapabilities` | Optional service-health block describing the deployed checkpoint's data-generation capacity. Fields are `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
+| `ForecastPlan` | Validated forecast plan returned by `plan_forecast_columns`. Fields are `columns` (ordered `ColumnSpec` tuple), `feature_columns`, `target_columns` (both reflect post-downgrade roles), and `requested_columns` (the caller's original target list). |
 | `StructuredError` | One structured JointFM service error with `code`, `message`, and optional `field`. |
 | `ForecastDiagnostics` | Response diagnostics containing `history_rows`, `horizon_count`, and optional `seed`. |
 | `QuantileForecast` | One quantile surface with `quantile` and `values`; `to_numpy()` returns axis order `(horizon, column)`. |
@@ -60,6 +62,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | Name | Raised When |
 | --- | --- |
 | `JointFMConfigurationError` | Local settings, credentials, URLs, deployment selection, or request configuration are invalid. |
+| `JointFMCapacityError` | Forecast inputs exceed the deployed checkpoint's advertised data-generation capacity, or the service-health payload does not advertise a `data_generation` block. |
 | `JointFMTransportError` | Base class for transport failures. |
 | `JointFMRequestEncodingError` | A request payload cannot be JSON encoded. |
 | `JointFMRequestError` | A network request fails before a usable response is received. |
@@ -70,7 +73,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JointFMCompatibilityError` | Base class for fail-fast service compatibility failures. |
 | `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v1`. |
 | `UnsupportedModelVersionError` | The service or response model version differs from the configured or requested version. |
-| `UnsupportedServiceContractError` | `/healthz` advertises mode capabilities outside the SDK's V1 contract. |
+| `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities outside the SDK's V1 contract. |
 
 ## Public Functions
 
@@ -86,16 +89,14 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `normalize_local_service_base_url(value)` | Validate a direct local JointFM service base URL. |
 | `build_hosted_deployment_url(datarobot_endpoint, deployment_id)` | Build `.../deployments/{deployment_id}` from the DataRobot endpoint. |
 | `build_hosted_predict_url(datarobot_endpoint, deployment_id)` | Build the hosted `predictionsUnstructured` URL from the DataRobot endpoint and deployment ID. |
-| `build_hosted_health_url(datarobot_endpoint, deployment_id)` | Build the hosted health URL from the DataRobot endpoint and deployment ID. |
 | `build_hosted_predict_url_from_deployment_url(deployment_url)` | Append `/predictionsUnstructured` to a normalized hosted deployment URL. |
-| `build_hosted_health_url_from_deployment_url(deployment_url)` | Append `/healthz` to a normalized hosted deployment URL. |
 | `deployment_id_from_hosted_deployment_url(deployment_url)` | Extract a deployment ID from a hosted deployment URL. |
 | `deployment_url_from_hosted_predict_url(predict_url)` | Return the owning hosted deployment URL for a hosted prediction URL. |
 | `build_local_health_url(service_base_url)` | Build a direct local service `/healthz` URL. |
 | `build_local_predict_url(service_base_url)` | Build a direct local service `/predict` URL. |
 | `build_datarobot_prediction_headers(api_token)` | Build hosted prediction headers: bearer authorization, broad accept header, and JSON content type. |
 | `build_forecast_payload(...)` | Build a validated JSON-compatible V1 forecast payload from explicit schema, history rows, query times, and return-mode controls. |
-| `validate_service_metadata(metadata, expected_model_version=None)` | Validate `/healthz` metadata against schema `v1`, the expected model when supplied, and advertised V1 mode capabilities. |
+| `validate_service_metadata(metadata, expected_model_version=None)` | Validate the service-health metadata against schema `v1`, the expected model when supplied, and advertised V1 mode capabilities. |
 | `infer_column_specs_from_dataframe(frame, ...)` | Infer ordered `ColumnSpec` objects from a pandas `DataFrame` and explicit role, modality, mapping, nullability, time-value, and bounds hints. |
 | `dataframe_to_history_rows(frame, schema)` | Convert a pandas `DataFrame` into server-compatible `history_rows`. |
 | `arrays_to_history_rows(values, columns=..., ...)` | Convert a two-dimensional NumPy-like array plus column metadata into `history_rows`. |
@@ -107,6 +108,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `validate_forecast_horizon(history_times, query_times, time_index_mode=...)` | Validate that query times are future, increasing, and encoded for the selected time-index mode. |
 | `resolve_notebook_project_root(start_dir=None)` | Resolve the nearest src-layout Python project root for notebooks started inside a repository tree. |
 | `bootstrap_notebook(add_src_root=False)` | Switch notebook working directory to the project root and optionally prepend the local `src` directory. |
+| `plan_forecast_columns(*, health, feature_columns, target_columns, history_length, query_times_length)` | Build a `ForecastPlan` from `HealthMetadata`. Caps `history_length` at `data_generation.n_input` and `query_times_length` at `n_output` (both upper bounds; smaller requests are allowed), enforces feature and target count bounds, rejects duplicate column names, and downgrades all feature columns to targets (with a warning) when the deployed checkpoint advertises `max_features=0`. Raises `JointFMCapacityError` when any bound is exceeded or required metadata is missing. |
 
 ## Environment Variables
 
@@ -115,9 +117,9 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `DATAROBOT_ENDPOINT` | Hosted calls | HTTPS DataRobot API v2 endpoint, normalized without a trailing slash and required to end in `/api/v2`. |
 | `DATAROBOT_API_TOKEN` | Hosted calls | Non-empty, whitespace-free API token used in the hosted bearer authorization header. |
 | `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v1`. |
-| `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from `/healthz` and prediction responses. |
+| `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
-| `JOINTFM_DEPLOYMENT_URL` | One selector | Hosted deployment URL; the SDK derives `/healthz` and `/predictionsUnstructured`. |
+| `JOINTFM_DEPLOYMENT_URL` | One selector | Hosted deployment URL; the SDK derives the `/predictionsUnstructured` route from it and reuses that route for health probes. |
 | `JOINTFM_PREDICT_URL` | One selector | Full hosted prediction URL ending in `/predictionsUnstructured`; the SDK derives the owning deployment URL. |
 | `JOINTFM_DEPLOYMENT_TARGET` | One selector with outputs path | Key in a saved Pulumi outputs JSON file. |
 | `JOINTFM_PULUMI_OUTPUTS_PATH` | With target selector | JSON file containing target outputs with exactly one of `deployment_id`, `deployment_url`, or `predict_url`. |
@@ -128,14 +130,26 @@ Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`
 
 ## V1 Payload Fields
 
+### Request Type Discriminator
+
+Every container request body carries an optional top-level `request_type` field that selects the request kind. The container handles `"health"` before any schema or model-version validation so callers can fetch the typed `HealthMetadata` payload without first knowing the deployed version pins.
+
+| Value | Description |
+| --- | --- |
+| `"predict"` (default when omitted) | Standard V1 forecast request; the rest of the fields in the table below are required. |
+| `"health"` | Minimal probe; the container returns the same payload it serves on `GET /healthz`. The SDK uses this for hosted DataRobot deployments because DataRobot's deployment gateway only proxies the unstructured prediction route. |
+
+The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`, and the validated tuple `SUPPORTED_REQUEST_TYPES`.
+
 ### Forecast Request
 
 | Field | Required | Description |
 | --- | --- | --- |
+| `request_type` | Optional | One of `"predict"` (default) or `"health"`. Forecast requests omit this field or set it to `"predict"`. |
 | `schema_version` | Yes | Must be `"v1"`. |
 | `model_version` | Yes | Exact deployed model version expected by the caller. |
 | `query_mode` | Yes | Must be `"forecast"`. |
-| `return_mode` | Yes | One of `"mean"`, `"samples"`, or `"quantiles"`. |
+| `return_mode` | Yes | One of `"mean"`, `"samples"`, `"quantiles"`, or `"log_prob"`. The high-level `forecast_mean`, `forecast_samples`, and `forecast_quantiles` helpers cover the first three; `"log_prob"` is reachable through the low-level `predict(payload)` path. |
 | `time_index_mode` | Yes | One of `"ordinal"`, `"continuous_float"`, or `"absolute_datetime"`. |
 | `columns` | Yes | Non-empty array of column descriptors for modeled columns. |
 | `history_rows` | Yes | Non-empty array of history row objects in the declared schema. |
@@ -203,9 +217,12 @@ Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`
 | `device` | Device used by inference. |
 | `head` | Active forecast head. |
 | `supported_query_modes` | Must match the SDK V1 query modes. |
-| `supported_return_modes` | Must match the SDK V1 return modes. |
+| `supported_return_modes` | Must match the SDK V1 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
 | `supported_time_index_modes` | Must match the SDK V1 time-index modes. |
 | `time_index_encoding` | Time-index encoding advertised by the service. |
+| `default_sample_count` | Default sample-count budget the service applies when callers omit `n_samples`. |
+| `max_sample_count` | Maximum sample-count budget the service accepts in a single prediction. Oversized requests are batched automatically by the client. |
+| `data_generation` | Optional capability block describing the deployed checkpoint's advertised data-generation capacity. Absent on legacy checkpoints; present payloads expose `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
 
 ## Docstring Enforcement
 

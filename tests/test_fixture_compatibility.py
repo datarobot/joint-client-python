@@ -30,7 +30,7 @@ def test_health_fixture_matches_current_v1_service_contract(
     metadata = HealthMetadata.from_payload(payload)
 
     assert metadata.schema_version == "v1"
-    assert metadata.supported_return_modes == ("mean", "samples", "quantiles")
+    assert metadata.supported_return_modes == ("mean", "samples", "quantiles", "log_prob")
 
 
 @pytest.mark.parametrize(

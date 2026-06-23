@@ -27,29 +27,35 @@ from jointfm_client import (
 
 
 class _HealthTransport:
+    _METADATA: dict[str, object] = {
+        "status": "ok",
+        "schema_version": "v1",
+        "image_version": "0.2.0",
+        "model_version": "jointfm-inference:0.2.0+ckpt.yaml",
+        "checkpoint_version": "yaml",
+        "checkpoint_path": "/models/jointfm.pt",
+        "device": "cpu",
+        "head": "studentt",
+        "supported_query_modes": ["forecast"],
+        "supported_return_modes": ["mean", "samples", "quantiles", "log_prob"],
+        "supported_time_index_modes": [
+            "ordinal",
+            "continuous_float",
+            "absolute_datetime",
+        ],
+        "time_index_encoding": "legacy_discrete_grid",
+        "default_sample_count": 256,
+        "max_sample_count": 4096,
+    }
+
     def get_json(self, url: str) -> dict[str, object]:
         del url
-        return {
-            "status": "ok",
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.yaml",
-            "checkpoint_version": "yaml",
-            "checkpoint_path": "/models/jointfm.pt",
-            "device": "cpu",
-            "head": "studentt",
-            "supported_query_modes": ["forecast"],
-            "supported_return_modes": ["mean", "samples", "quantiles"],
-            "supported_time_index_modes": [
-                "ordinal",
-                "continuous_float",
-                "absolute_datetime",
-            ],
-            "time_index_encoding": "legacy_discrete_grid",
-        }
+        return dict(self._METADATA)
 
     def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, object]:
-        del url, payload
+        del url
+        if payload.get("request_type") == "health":
+            return dict(self._METADATA)
         return {}
 
 

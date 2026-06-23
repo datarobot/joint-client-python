@@ -14,7 +14,7 @@ tasks:
     desc: Create or reuse the local Python environment and install repo tooling
     cmds:
       - uv venv --allow-existing --python 3.13.3
-      - uv sync --all-groups
+      - uv sync --all-groups --extra notebooks
       - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
       - uv run pre-commit install
       - task: install-typos

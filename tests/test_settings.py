@@ -16,8 +16,6 @@ from jointfm_client import (
     JointFMClient,
     JointFMConfigurationError,
     build_datarobot_prediction_headers,
-    build_hosted_health_url,
-    build_hosted_health_url_from_deployment_url,
     build_hosted_predict_url,
     build_hosted_predict_url_from_deployment_url,
     build_local_health_url,
@@ -52,13 +50,11 @@ def test_load_settings_from_environment_with_deployment_id_builds_hosted_url() -
     assert settings.schema_version == "v1"
     assert settings.model_version == "jointfm-inference:0.2.0+ckpt.sdk-test"
     assert settings.deployment_id == "deployment-id"
-    assert settings.health_url == (
-        "https://app.datarobot.com/api/v2/deployments/deployment-id/healthz"
-    )
     assert settings.predict_url == (
         "https://app.datarobot.com/api/v2/deployments/"
         "deployment-id/predictionsUnstructured"
     )
+    assert settings.health_url == settings.predict_url
     assert "secret-token" not in repr(settings)
 
 
@@ -99,13 +95,11 @@ def test_load_settings_with_deployment_url_selector_builds_prediction_url() -> N
     assert settings.deployment_url == (
         "https://app.datarobot.com/api/v2/deployments/deployment-from-url"
     )
-    assert settings.health_url == (
-        "https://app.datarobot.com/api/v2/deployments/deployment-from-url/healthz"
-    )
     assert settings.predict_url == (
         "https://app.datarobot.com/api/v2/deployments/"
         "deployment-from-url/predictionsUnstructured"
     )
+    assert settings.health_url == settings.predict_url
 
 
 def test_load_settings_with_predict_url_selector_finds_deployment_url() -> None:
@@ -126,13 +120,11 @@ def test_load_settings_with_predict_url_selector_finds_deployment_url() -> None:
     assert settings.deployment_url == (
         "https://app.datarobot.com/api/v2/deployments/deployment-from-predict"
     )
-    assert settings.health_url == (
-        "https://app.datarobot.com/api/v2/deployments/deployment-from-predict/healthz"
-    )
     assert settings.predict_url == (
         "https://app.datarobot.com/api/v2/deployments/"
         "deployment-from-predict/predictionsUnstructured"
     )
+    assert settings.health_url == settings.predict_url
 
 
 def test_load_settings_reads_dotenv_without_overriding_environment(tmp_path) -> None:
@@ -390,10 +382,6 @@ def test_hosted_and_local_url_builders_are_separate() -> None:
         "https://app.datarobot.com/api/v2/deployments/"
         "deployment-id/predictionsUnstructured"
     )
-    assert build_hosted_health_url(
-        "https://app.datarobot.com/api/v2/",
-        "deployment-id",
-    ) == "https://app.datarobot.com/api/v2/deployments/deployment-id/healthz"
     assert build_local_health_url("http://localhost:8080/") == (
         "http://localhost:8080/healthz"
     )
@@ -405,11 +393,9 @@ def test_hosted_and_local_url_builders_are_separate() -> None:
 def test_hosted_url_helpers_normalize_supported_forms() -> None:
     deployment_url = "https://app.datarobot.com/api/v2/deployments/deployment-id"
     predict_url = f"{deployment_url}/predictionsUnstructured"
-    health_url = f"{deployment_url}/healthz"
 
     assert normalize_hosted_deployment_url(f"{deployment_url}/") == deployment_url
     assert normalize_hosted_predict_url(f"{predict_url}/") == predict_url
-    assert build_hosted_health_url_from_deployment_url(deployment_url) == health_url
     assert build_hosted_predict_url_from_deployment_url(deployment_url) == predict_url
     assert deployment_id_from_hosted_deployment_url(deployment_url) == "deployment-id"
     assert deployment_url_from_hosted_predict_url(predict_url) == deployment_url

@@ -170,10 +170,10 @@ The current V1 forecast request contract is:
 
 V1 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
-DataFrame helpers are available through the optional extra:
+DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas` and `yfinance` (the latter powers the Yahoo Finance download in `notebooks/forecast_trading.ipynb`):
 
 ```bash
-uv add "jointfm-client[dataframe]"
+uv add "jointfm-client[notebooks]"
 ```
 
 Use `build_forecast_payload_from_dataframe(...)` when history is already in a pandas DataFrame. It can accept explicit `ColumnSpec` objects or infer basic numeric, categorical, ordinal, count, binary, and time-valued columns from the DataFrame plus role, mapping, nullable, and bounds hints. The helper emits `history_rows` in the same order as the service frame builder: `time_column` first when present, followed by the ordered modeled columns. `build_forecast_payload_from_arrays(...)` provides the same request path for two-dimensional NumPy-like arrays when callers already have array values and column metadata. `build_datetime_query_times(...)`, `build_ordinal_query_times(...)`, `build_continuous_query_times(...)`, and `validate_forecast_horizon(...)` perform local future-horizon validation before the SDK sends the request.

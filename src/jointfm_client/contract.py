@@ -28,8 +28,15 @@ LOCAL_HEALTH_ROUTE: Final = "/healthz"
 LOCAL_PREDICT_ROUTE: Final = "/predict"
 DEFAULT_CALENDAR_ID: Final = "pandas-default"
 
+PREDICT_REQUEST_TYPE: Final = "predict"
+HEALTH_REQUEST_TYPE: Final = "health"
+SUPPORTED_REQUEST_TYPES: Final[tuple[str, ...]] = (
+    PREDICT_REQUEST_TYPE,
+    HEALTH_REQUEST_TYPE,
+)
+
 QueryMode: TypeAlias = Literal["forecast"]
-ReturnMode: TypeAlias = Literal["mean", "samples", "quantiles"]
+ReturnMode: TypeAlias = Literal["mean", "samples", "quantiles", "log_prob"]
 TimeIndexMode: TypeAlias = Literal[
     "ordinal",
     "continuous_float",
@@ -64,6 +71,7 @@ SUPPORTED_RETURN_MODES: Final[tuple[ReturnMode, ...]] = (
     "mean",
     "samples",
     "quantiles",
+    "log_prob",
 )
 SUPPORTED_TIME_INDEX_MODES: Final[tuple[TimeIndexMode, ...]] = (
     "ordinal",
@@ -362,6 +370,73 @@ class ForecastRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class DataGenerationCapabilities:
+    """Training-time data-generation envelope advertised by the deployment.
+
+    Mirrors the inference service's ``data_generation`` health block. The fields
+    define both the maximum width of one request (``max_features``,
+    ``max_targets``), the legacy minimum requirements (``min_features``,
+    ``min_targets``), the maximum history length the deployment was trained
+    to handle (``n_input``), and the maximum forecast horizon (``n_output``).
+    ``n_input`` and ``n_output`` are upper bounds; smaller requests are
+    accepted. A deployment with ``max_features == 0`` accepts only target
+    columns.
+    """
+
+    sampler_type: str
+    min_features: int
+    max_features: int
+    min_targets: int
+    max_targets: int
+    t_input: float
+    t_output: float
+    n_input: int
+    n_output: int
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> Self:
+        """Parse one ``data_generation`` block from a `/healthz` payload."""
+        return cls(
+            sampler_type=_require_string(
+                payload.get("sampler_type"),
+                field="data_generation.sampler_type",
+            ),
+            min_features=_require_non_negative_int(
+                payload.get("min_features"),
+                field="data_generation.min_features",
+            ),
+            max_features=_require_non_negative_int(
+                payload.get("max_features"),
+                field="data_generation.max_features",
+            ),
+            min_targets=_require_non_negative_int(
+                payload.get("min_targets"),
+                field="data_generation.min_targets",
+            ),
+            max_targets=_require_non_negative_int(
+                payload.get("max_targets"),
+                field="data_generation.max_targets",
+            ),
+            t_input=_require_positive_float(
+                payload.get("t_input"),
+                field="data_generation.t_input",
+            ),
+            t_output=_require_positive_float(
+                payload.get("t_output"),
+                field="data_generation.t_output",
+            ),
+            n_input=_require_positive_int(
+                payload.get("n_input"),
+                field="data_generation.n_input",
+            ),
+            n_output=_require_positive_int(
+                payload.get("n_output"),
+                field="data_generation.n_output",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class HealthMetadata:
     """Typed representation of `/healthz` service metadata."""
 
@@ -377,11 +452,21 @@ class HealthMetadata:
     supported_return_modes: tuple[str, ...]
     supported_time_index_modes: tuple[str, ...]
     time_index_encoding: str
+    default_sample_count: int
+    max_sample_count: int
+    data_generation: DataGenerationCapabilities | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
         """Parse and validate a JSON health payload from the service."""
         validate_service_metadata(payload)
+        raw_data_generation = payload.get("data_generation")
+        if raw_data_generation is None:
+            parsed_data_generation: DataGenerationCapabilities | None = None
+        else:
+            parsed_data_generation = DataGenerationCapabilities.from_payload(
+                _require_mapping(raw_data_generation, field="data_generation")
+            )
         return cls(
             status=_require_string(payload.get("status"), field="status"),
             schema_version=_require_string(
@@ -422,6 +507,15 @@ class HealthMetadata:
                 payload.get("time_index_encoding"),
                 field="time_index_encoding",
             ),
+            default_sample_count=_require_positive_int(
+                payload.get("default_sample_count"),
+                field="default_sample_count",
+            ),
+            max_sample_count=_require_positive_int(
+                payload.get("max_sample_count"),
+                field="max_sample_count",
+            ),
+            data_generation=parsed_data_generation,
         )
 
 
@@ -1493,7 +1587,7 @@ def _require_pandas_module() -> Any:
         import pandas as pandas_module
     except ImportError as error:  # pragma: no cover - exercised only without extra
         raise RuntimeError(
-            "pandas result conversion requires installing jointfm-client[dataframe]"
+            "pandas result conversion requires installing jointfm-client[notebooks]"
         ) from error
     return pandas_module
 
@@ -1503,7 +1597,7 @@ def _require_numpy_module() -> Any:
         import numpy as numpy_module
     except ImportError as error:  # pragma: no cover - exercised only without extra
         raise RuntimeError(
-            "NumPy result conversion requires installing jointfm-client[dataframe]"
+            "NumPy result conversion requires installing jointfm-client[notebooks]"
         ) from error
     return numpy_module
 
@@ -1578,6 +1672,23 @@ def _require_positive_int(value: Any, *, field: str) -> int:
     if value <= 0:
         raise ValueError(f"{field} must be positive")
     return value
+
+
+def _require_non_negative_int(value: Any, *, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field} must be an integer")
+    if value < 0:
+        raise ValueError(f"{field} must be non-negative")
+    return value
+
+
+def _require_positive_float(value: Any, *, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be numeric")
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0.0:
+        raise ValueError(f"{field} must be a positive finite number")
+    return parsed
 
 
 def _optional_int(value: Any, *, field: str) -> int | None:

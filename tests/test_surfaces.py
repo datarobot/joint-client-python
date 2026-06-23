@@ -20,7 +20,11 @@ from jointfm_client import (
 
 class _SurfaceHandlerBase(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]]
-    route_map: Mapping[tuple[str, str], tuple[HTTPStatus, Mapping[str, Any]]]
+    route_map: Mapping[
+        tuple[str, str],
+        tuple[HTTPStatus, Mapping[str, Any]]
+        | Mapping[str | None, tuple[HTTPStatus, Mapping[str, Any]]],
+    ]
 
 
 def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
@@ -29,21 +33,23 @@ def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
     request_payload = json_fixture_loader("forecast_mean_request")
     health_payload = json_fixture_loader("health_metadata")
     response_payload = json_fixture_loader("forecast_mean_response")
-    health_path = "/deployments/deployment-id/healthz"
     predict_path = "/deployments/deployment-id/predictionsUnstructured"
     server, handler = _start_surface_server(
         {
-            ("GET", health_path): (HTTPStatus.OK, health_payload),
-            ("POST", predict_path): (HTTPStatus.OK, response_payload),
+            ("POST", predict_path): {
+                "health": (HTTPStatus.OK, health_payload),
+                None: (HTTPStatus.OK, response_payload),
+            },
         }
     )
     try:
         base_url = _server_base_url(server)
+        predict_url = f"{base_url}{predict_path}"
         settings = JointFMSettings(
             datarobot_endpoint="https://app.datarobot.com/api/v2",
             datarobot_api_token="secret-token",
-            health_url=f"{base_url}{health_path}",
-            predict_url=f"{base_url}{predict_path}",
+            health_url=predict_url,
+            predict_url=predict_url,
             deployment_selector="deployment_id",
             schema_version="v1",
             model_version=request_payload["model_version"],
@@ -56,7 +62,9 @@ def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
 
         assert health.model_version == settings.model_version
         assert response == response_payload
-        assert [entry["path"] for entry in handler.requests] == [health_path, predict_path]
+        assert [entry["path"] for entry in handler.requests] == [predict_path, predict_path]
+        assert [entry["method"] for entry in handler.requests] == ["POST", "POST"]
+        assert handler.requests[0]["body"] == {"request_type": "health"}
         assert handler.requests[0]["headers"]["Authorization"] == "Bearer secret-token"
         assert handler.requests[1]["headers"]["Accept"] == "*/*"
         assert (
@@ -153,7 +161,11 @@ def test_local_surface_rejects_samples_below_requested_lower_bound(
 
 
 def _start_surface_server(
-    routes: Mapping[tuple[str, str], tuple[HTTPStatus, Mapping[str, Any]]],
+    routes: Mapping[
+        tuple[str, str],
+        tuple[HTTPStatus, Mapping[str, Any]]
+        | Mapping[str | None, tuple[HTTPStatus, Mapping[str, Any]]],
+    ],
 ) -> tuple[ThreadingHTTPServer, type[_SurfaceHandlerBase]]:
     class SurfaceHandler(_SurfaceHandlerBase):
         requests: list[dict[str, Any]] = []
@@ -177,7 +189,16 @@ def _start_surface_server(
                     "body": decoded_body,
                 }
             )
-            status, payload = type(self).route_map[(method, self.path)]
+            route_value = type(self).route_map[(method, self.path)]
+            if isinstance(route_value, Mapping):
+                discriminator = (
+                    decoded_body.get("request_type")
+                    if isinstance(decoded_body, Mapping)
+                    else None
+                )
+                status, payload = route_value[discriminator]
+            else:
+                status, payload = route_value
             response_body = json.dumps(payload).encode("utf-8")
             self.send_response(int(status))
             self.send_header("Content-Type", "application/json")

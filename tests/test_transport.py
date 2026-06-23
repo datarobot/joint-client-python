@@ -84,9 +84,12 @@ class RecordingTransport:
         return self.health_payload
 
     def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.post_count += 1
+        if payload.get("request_type") == "health":
+            self.health_url = url
+            return self.health_payload
         self.predict_url = url
         self.payload = payload
-        self.post_count += 1
         return self.predict_payload
 
 
@@ -117,13 +120,15 @@ def _health_payload(*, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-te
         "device": "cpu",
         "head": "studentt",
         "supported_query_modes": ["forecast"],
-        "supported_return_modes": ["mean", "samples", "quantiles"],
+        "supported_return_modes": ["mean", "samples", "quantiles", "log_prob"],
         "supported_time_index_modes": [
             "ordinal",
             "continuous_float",
             "absolute_datetime",
         ],
         "time_index_encoding": "legacy_discrete_grid",
+        "default_sample_count": 256,
+        "max_sample_count": 4096,
     }
 
 
@@ -392,7 +397,7 @@ def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
-        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/healthz",
+        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
         schema_version="v1",
@@ -413,8 +418,9 @@ def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -
     assert uncached_again.model_version == settings.model_version
     assert cached is cached_again
     assert refreshed.model_version == settings.model_version
-    assert transport.health_url == settings.health_url
-    assert transport.get_count == 4
+    assert transport.health_url == settings.predict_url
+    assert transport.get_count == 0
+    assert transport.post_count == 4
 
 
 def test_client_from_env_forwards_timeout_and_retry_config(
@@ -476,7 +482,7 @@ def test_client_health_rejects_cached_model_mismatch() -> None:
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
-        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/healthz",
+        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
         schema_version="v1",
@@ -491,6 +497,57 @@ def test_client_health_rejects_cached_model_mismatch() -> None:
 
     with pytest.raises(UnsupportedModelVersionError, match="model_version"):
         client.health(cache=True)
+
+
+def test_client_hosted_health_posts_request_type_health_to_predict_url() -> None:
+    """Hosted health probes POST a minimal discriminator to the DR-proxied predict route."""
+    predict_url = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "deployment-id/predictionsUnstructured"
+    )
+    settings = JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url=predict_url,
+        predict_url=predict_url,
+        deployment_selector="deployment_id",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="deployment-id",
+    )
+    transport = RecordingTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+
+    metadata = client.health()
+
+    assert isinstance(metadata, HealthMetadata)
+    assert transport.get_count == 0
+    assert transport.post_count == 1
+    assert transport.health_url == predict_url
+    assert transport.payload is None
+
+
+def test_client_local_health_keeps_get_request_to_healthz_route() -> None:
+    """Local deployments must continue probing the container's GET /healthz route."""
+    settings = JointFMSettings(
+        datarobot_endpoint=None,
+        datarobot_api_token=None,
+        health_url="http://127.0.0.1:8080/healthz",
+        predict_url="http://127.0.0.1:8080/predict",
+        deployment_selector="local_service",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        local_base_url="http://127.0.0.1:8080",
+    )
+    transport = RecordingTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+
+    metadata = client.health()
+
+    assert isinstance(metadata, HealthMetadata)
+    assert transport.get_count == 1
+    assert transport.post_count == 0
+    assert transport.health_url == "http://127.0.0.1:8080/healthz"
 
 
 def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -> None:

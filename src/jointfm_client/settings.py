@@ -113,12 +113,11 @@ def load_settings(
             _required_env(env_values, environment.deployment_id)
         )
         deployment_url = build_hosted_deployment_url(datarobot_endpoint, deployment_id)
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url(datarobot_endpoint, deployment_id)
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="deployment_id",
             schema_version=schema_version,
@@ -132,12 +131,11 @@ def load_settings(
             _required_env(env_values, environment.deployment_url)
         )
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url_from_deployment_url(deployment_url)
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="deployment_url",
             schema_version=schema_version,
@@ -152,11 +150,10 @@ def load_settings(
         )
         deployment_url = deployment_url_from_hosted_predict_url(predict_url)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="predict_url",
             schema_version=schema_version,
@@ -175,7 +172,6 @@ def load_settings(
             datarobot_endpoint,
             normalized_deployment_id,
         )
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url(
             datarobot_endpoint,
             normalized_deployment_id,
@@ -183,7 +179,7 @@ def load_settings(
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="pulumi_target",
             schema_version=schema_version,
@@ -197,12 +193,11 @@ def load_settings(
     if deployment_url_output is not None:
         deployment_url = normalize_hosted_deployment_url(deployment_url_output)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url_from_deployment_url(deployment_url)
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="pulumi_target",
             schema_version=schema_version,
@@ -217,11 +212,10 @@ def load_settings(
         predict_url = normalize_hosted_predict_url(predict_url_output)
         deployment_url = deployment_url_from_hosted_predict_url(predict_url)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
-        health_url = build_hosted_health_url_from_deployment_url(deployment_url)
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
-            health_url=health_url,
+            health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="pulumi_target",
             schema_version=schema_version,
@@ -317,13 +311,6 @@ def build_hosted_predict_url(datarobot_endpoint: str, deployment_id: str) -> str
     return urljoin(service_base_url, predict_route)
 
 
-def build_hosted_health_url(datarobot_endpoint: str, deployment_id: str) -> str:
-    """Build the hosted DataRobot deployment health URL."""
-
-    deployment_url = build_hosted_deployment_url(datarobot_endpoint, deployment_id)
-    return build_hosted_health_url_from_deployment_url(deployment_url)
-
-
 def normalize_hosted_deployment_url(value: str) -> str:
     """Validate a hosted DataRobot deployment URL."""
 
@@ -349,13 +336,6 @@ def build_hosted_predict_url_from_deployment_url(deployment_url: str) -> str:
 
     normalized_deployment_url = normalize_hosted_deployment_url(deployment_url)
     return urljoin(normalized_deployment_url.rstrip("/") + "/", "predictionsUnstructured")
-
-
-def build_hosted_health_url_from_deployment_url(deployment_url: str) -> str:
-    """Build the hosted health URL from a hosted deployment URL."""
-
-    normalized_deployment_url = normalize_hosted_deployment_url(deployment_url)
-    return urljoin(normalized_deployment_url.rstrip("/") + "/", "healthz")
 
 
 def deployment_id_from_hosted_deployment_url(deployment_url: str) -> str:

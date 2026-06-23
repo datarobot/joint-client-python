@@ -18,6 +18,7 @@ from jointfm_client.configuration import (
 )
 from jointfm_client.contract import (
     DEFAULT_CALENDAR_ID,
+    HEALTH_REQUEST_TYPE,
     SCHEMA_VERSION,
     ColumnRole,
     ColumnSpec,
@@ -129,18 +130,43 @@ class JointFMClient:
         )
 
     def health(self, *, cache: bool = False, refresh: bool = False) -> HealthMetadata:
-        """Return service metadata from the configured JointFM endpoint."""
+        """Return service metadata from the configured JointFM endpoint.
+
+        Local deployments (``deployment_selector == "local_service"``) probe the
+        container's ``GET /healthz`` route directly. Hosted DataRobot deployments
+        POST ``{"request_type": "health"}`` to ``predict_url`` because DataRobot's
+        deployment gateway only proxies the unstructured prediction route; the
+        container short-circuits that body before any schema or model version
+        validation and returns the same typed health payload.
+        """
         if cache and not refresh and self._health_metadata is not None:
             return self._health_metadata
 
-        health_url = self._require_health_url()
-        payload = self._transport_for_request().get_json(health_url)
+        if self._uses_predict_route_for_health():
+            payload = self._fetch_hosted_health_payload()
+        else:
+            health_url = self._require_health_url()
+            payload = self._transport_for_request().get_json(health_url)
         expected_model_version = None if self.settings is None else self.settings.model_version
         validate_service_metadata(payload, expected_model_version=expected_model_version)
         metadata = HealthMetadata.from_payload(payload)
         if cache:
             self._health_metadata = metadata
         return metadata
+
+    def _uses_predict_route_for_health(self) -> bool:
+        """Return whether hosted health probes must POST to the predict route."""
+        if self.settings is None:
+            return False
+        return self.settings.deployment_selector != "local_service"
+
+    def _fetch_hosted_health_payload(self) -> Mapping[str, Any]:
+        """POST a minimal health discriminator to the hosted predict URL."""
+        predict_url = self._require_predict_url("health")
+        return self._transport_for_request().post_json(
+            predict_url,
+            {"request_type": HEALTH_REQUEST_TYPE},
+        )
 
     def predict(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """Submit one V1 JSON prediction payload to the configured endpoint."""

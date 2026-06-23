@@ -233,7 +233,7 @@ def _require_pandas() -> Any:
         import pandas as pandas_module
     except ImportError as error:  # pragma: no cover - exercised only without extra
         raise RuntimeError(
-            "forecast-csv requires installing jointfm-client[dataframe]"
+            "forecast-csv requires installing jointfm-client[notebooks]"
         ) from error
     return pandas_module
 

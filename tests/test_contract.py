@@ -62,13 +62,26 @@ def _health_metadata() -> dict[str, object]:
         "device": "cpu",
         "head": "dummy",
         "supported_query_modes": ["forecast"],
-        "supported_return_modes": ["mean", "quantiles", "samples"],
+        "supported_return_modes": ["mean", "quantiles", "samples", "log_prob"],
         "supported_time_index_modes": [
             "absolute_datetime",
             "continuous_float",
             "ordinal",
         ],
         "time_index_encoding": "legacy_discrete_grid",
+        "default_sample_count": 256,
+        "max_sample_count": 4096,
+        "data_generation": {
+            "sampler_type": "studentt",
+            "min_features": 0,
+            "max_features": 12,
+            "min_targets": 1,
+            "max_targets": 4,
+            "t_input": 10.0,
+            "t_output": 3.0,
+            "n_input": 100,
+            "n_output": 10,
+        },
     }
 
 
@@ -89,7 +102,7 @@ def test_service_route_contract() -> None:
 
 def test_mode_and_error_contract() -> None:
     assert SUPPORTED_QUERY_MODES == ("forecast",)
-    assert SUPPORTED_RETURN_MODES == ("mean", "samples", "quantiles")
+    assert SUPPORTED_RETURN_MODES == ("mean", "samples", "quantiles", "log_prob")
     assert SUPPORTED_TIME_INDEX_MODES == (
         "ordinal",
         "continuous_float",
@@ -943,7 +956,13 @@ def test_validate_service_metadata_rejects_model_mismatch() -> None:
 
 def test_validate_service_metadata_rejects_unknown_advertised_mode() -> None:
     metadata = _health_metadata()
-    metadata["supported_return_modes"] = ["mean", "samples", "quantiles", "median"]
+    metadata["supported_return_modes"] = [
+        "mean",
+        "samples",
+        "quantiles",
+        "log_prob",
+        "median",
+    ]
 
     with pytest.raises(UnsupportedServiceContractError, match="supported_return_modes"):
         validate_service_metadata(metadata)
