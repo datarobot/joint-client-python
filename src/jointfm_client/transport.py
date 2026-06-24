@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import math
 from typing import Any, Final, Protocol
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+from tenacity import RetryCallState, Retrying, stop_after_attempt
+from tenacity.wait import wait_base, wait_random_exponential
 
 from jointfm_client.configuration import (
     DATAROBOT_REQUEST_ID_HEADERS,
     DEFAULT_BACKOFF_SECONDS,
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_BACKOFF_SECONDS,
     DEFAULT_READ_TIMEOUT_SECONDS,
     DEFAULT_RESPONSE_BODY_EXCERPT_CHARACTERS,
     DEFAULT_RETRYABLE_METHODS,
@@ -33,6 +36,7 @@ from jointfm_client.exceptions import (
 from jointfm_client.settings import JointFMSettings, build_datarobot_prediction_headers
 
 RETRYABLE_METHODS: Final = frozenset(DEFAULT_RETRYABLE_METHODS)
+RETRY_AFTER_HEADER: Final = "Retry-After"
 
 
 def _require_positive_finite(value: float, field: str) -> None:
@@ -73,6 +77,7 @@ class JointFMRetryConfig:
 
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     backoff_seconds: float = DEFAULT_BACKOFF_SECONDS
+    max_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
     status_codes: Sequence[int] = field(default_factory=lambda: DEFAULT_RETRY_STATUS_CODES)
     allowed_methods: Sequence[str] = field(default_factory=lambda: DEFAULT_RETRYABLE_METHODS)
 
@@ -82,6 +87,8 @@ class JointFMRetryConfig:
             raise JointFMConfigurationError("max_attempts must be at least 1")
         if not math.isfinite(self.backoff_seconds) or self.backoff_seconds < 0:
             raise JointFMConfigurationError("backoff_seconds must be finite and non-negative")
+        if not math.isfinite(self.max_backoff_seconds) or self.max_backoff_seconds <= 0:
+            raise JointFMConfigurationError("max_backoff_seconds must be finite and positive")
         for status_code in self.status_codes:
             if status_code < 400:
                 raise JointFMConfigurationError("retry status_codes must be HTTP error statuses")
@@ -90,21 +97,6 @@ class JointFMRetryConfig:
         for method in self.allowed_methods:
             if method == "" or method.strip() != method:
                 raise JointFMConfigurationError("allowed_methods must be non-empty HTTP methods")
-
-    def as_urllib3_retry(self) -> Retry:
-        """Return the retry policy object consumed by `requests` adapters."""
-        retry_count = self.max_attempts - 1
-        return Retry(
-            total=retry_count,
-            connect=retry_count,
-            read=retry_count,
-            status=retry_count,
-            backoff_factor=self.backoff_seconds,
-            status_forcelist=tuple(self.status_codes),
-            allowed_methods=frozenset(self.allowed_methods),
-            raise_on_status=False,
-            respect_retry_after_header=True,
-        )
 
 
 class JointFMHTTPTransport:
@@ -125,6 +117,7 @@ class JointFMHTTPTransport:
         self._session = session or requests.Session()
         self._headers = _headers_with_user_agent(headers or {}, user_agent)
         self._timeout = timeout
+        self._retry_config = retry_config
         self._response_body_excerpt_characters = _require_positive_integer(
             response_body_excerpt_characters,
             "response_body_excerpt_characters",
@@ -133,9 +126,6 @@ class JointFMHTTPTransport:
             datarobot_request_id_headers,
             "datarobot_request_id_headers",
         )
-        adapter = HTTPAdapter(max_retries=retry_config.as_urllib3_retry())
-        self._session.mount("https://", adapter)
-        self._session.mount("http://", adapter)
 
     @classmethod
     def from_settings(
@@ -186,6 +176,32 @@ class JointFMHTTPTransport:
         *,
         payload: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
+        retry_cfg = self._retry_config
+        method_is_retryable = method in frozenset(retry_cfg.allowed_methods)
+        if retry_cfg.max_attempts <= 1 or not method_is_retryable:
+            return self._request_json_once(method, url, payload=payload)
+
+        retrying = Retrying(
+            stop=stop_after_attempt(retry_cfg.max_attempts),
+            wait=_WaitWithRetryAfter(
+                base=wait_random_exponential(
+                    multiplier=retry_cfg.backoff_seconds,
+                    max=retry_cfg.max_backoff_seconds,
+                ),
+                cap_seconds=retry_cfg.max_backoff_seconds,
+            ),
+            retry=_build_retry_predicate(retry_cfg),
+            reraise=True,
+        )
+        return retrying(self._request_json_once, method, url, payload=payload)
+
+    def _request_json_once(
+        self,
+        method: str,
+        url: str,
+        *,
+        payload: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
         try:
             response = self._session.request(
                 method,
@@ -214,6 +230,75 @@ class JointFMHTTPTransport:
                 datarobot_request_id_headers=self._datarobot_request_id_headers,
             )
         return response_payload
+
+
+def _build_retry_predicate(
+    retry_cfg: JointFMRetryConfig,
+) -> Callable[[RetryCallState], bool]:
+    status_codes = frozenset(retry_cfg.status_codes)
+
+    def _should_retry(retry_state: RetryCallState) -> bool:
+        outcome = retry_state.outcome
+        if outcome is None or not outcome.failed:
+            return False
+        error = outcome.exception()
+        if isinstance(error, JointFMRequestError):
+            return True
+        if isinstance(error, JointFMHTTPStatusError):
+            return error.status_code in status_codes
+        return False
+
+    return _should_retry
+
+
+class _WaitWithRetryAfter(wait_base):
+    """Tenacity wait that combines exponential jitter with a `Retry-After` floor."""
+
+    def __init__(self, *, base: wait_base, cap_seconds: float) -> None:
+        """Store the base wait strategy and the absolute cap for the final sleep."""
+        self._base = base
+        self._cap_seconds = cap_seconds
+
+    def __call__(self, retry_state: RetryCallState) -> float:
+        """Return the sleep duration before the next retry attempt."""
+        wait_seconds = float(self._base(retry_state))
+        retry_after = _retry_after_from_outcome(retry_state)
+        if retry_after is not None:
+            wait_seconds = max(wait_seconds, retry_after)
+        return min(self._cap_seconds, wait_seconds)
+
+
+def _retry_after_from_outcome(retry_state: RetryCallState) -> float | None:
+    outcome = retry_state.outcome
+    if outcome is None or not outcome.failed:
+        return None
+    error = outcome.exception()
+    if not isinstance(error, JointFMHTTPStatusError):
+        return None
+    return error.retry_after_seconds
+
+
+def _parse_retry_after_header(value: str | None) -> float | None:
+    """Parse an HTTP ``Retry-After`` header value into a non-negative seconds offset."""
+    if value is None:
+        return None
+    text = value.strip()
+    if text == "":
+        return None
+    try:
+        seconds = float(text)
+    except ValueError:
+        try:
+            target = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            return None
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+        delta = (target - datetime.now(tz=timezone.utc)).total_seconds()
+        return max(0.0, delta)
+    if not math.isfinite(seconds) or seconds < 0:
+        return None
+    return seconds
 
 
 def _headers_with_user_agent(
@@ -288,6 +373,7 @@ def _http_status_error(
         ),
         datarobot_request_id=_datarobot_request_id(response, datarobot_request_id_headers),
         jointfm_errors=jointfm_errors,
+        retry_after_seconds=_parse_retry_after_header(response.headers.get(RETRY_AFTER_HEADER)),
     )
 
 

@@ -272,15 +272,68 @@ def test_retry_config_builds_expected_urllib3_policy() -> None:
     retry = JointFMRetryConfig(
         max_attempts=4,
         backoff_seconds=0.5,
+        max_backoff_seconds=12.0,
         status_codes=(408, 500),
-    ).as_urllib3_retry()
+    )
 
-    assert retry.total == 3
-    assert retry.connect == 3
-    assert retry.read == 3
-    assert retry.status == 3
-    assert retry.backoff_factor == 0.5
-    assert retry.status_forcelist == (408, 500)
+    assert retry.max_attempts == 4
+    assert retry.backoff_seconds == 0.5
+    assert retry.max_backoff_seconds == 12.0
+    assert retry.status_codes == (408, 500)
+
+
+def test_retry_config_rejects_invalid_max_backoff_seconds() -> None:
+    with pytest.raises(JointFMConfigurationError, match="max_backoff_seconds"):
+        JointFMRetryConfig(max_backoff_seconds=0.0)
+    with pytest.raises(JointFMConfigurationError, match="max_backoff_seconds"):
+        JointFMRetryConfig(max_backoff_seconds=float("nan"))
+
+
+def test_transport_retries_connection_errors_via_tenacity() -> None:
+    class FlakySession(requests.Session):
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_count = 0
+
+        def request(self, *args: Any, **kwargs: Any) -> requests.Response:
+            del args, kwargs
+            self.call_count += 1
+            if self.call_count < 3:
+                raise requests.ConnectionError("boom")
+            return _response(body=b'{"ok": true}')
+
+    session = FlakySession()
+    transport = JointFMHTTPTransport(
+        session=session,
+        retry_config=JointFMRetryConfig(
+            max_attempts=3,
+            backoff_seconds=0.0,
+            max_backoff_seconds=0.01,
+        ),
+    )
+
+    result = transport.post_json("https://example.com/predict", {"schema_version": "v1"})
+
+    assert result == {"ok": True}
+    assert session.call_count == 3
+
+
+def test_status_error_carries_parsed_retry_after_seconds() -> None:
+    server, handler = _start_json_server(
+        [HTTPStatus.SERVICE_UNAVAILABLE],
+        extra_headers={"Retry-After": "0.5"},
+    )
+    try:
+        transport = JointFMHTTPTransport(retry_config=JointFMRetryConfig(max_attempts=1))
+
+        with pytest.raises(JointFMHTTPStatusError) as exc_info:
+            transport.post_json(_server_url(server), {"schema_version": "v1"})
+
+        assert exc_info.value.retry_after_seconds == 0.5
+        assert handler.request_count == 1
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def test_transport_does_not_retry_validation_errors() -> None:
@@ -792,7 +845,11 @@ def test_client_forecast_requires_model_version_without_settings_or_health() -> 
 
 def _start_json_server(
     statuses: list[HTTPStatus],
+    *,
+    extra_headers: Mapping[str, str] | None = None,
 ) -> tuple[ThreadingHTTPServer, type[BaseHTTPRequestHandler]]:
+    response_headers = dict(extra_headers or {})
+
     class JSONHandler(BaseHTTPRequestHandler):
         request_count = 0
 
@@ -817,6 +874,8 @@ def _start_json_server(
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("X-DataRobot-Request-ID", f"request-id-{type(self).request_count}")
+            for name, value in response_headers.items():
+                self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
 

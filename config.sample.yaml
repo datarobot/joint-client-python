@@ -30,7 +30,8 @@ transport:
     read_seconds: 60.0
   retry:
     max_attempts: 3
-    backoff_seconds: 0.25
+    backoff_seconds: 1
+    max_backoff_seconds: 30.0
     status_codes:
       - 408
       - 429

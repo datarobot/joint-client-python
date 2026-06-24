@@ -59,7 +59,7 @@ transport:
 		read_seconds: 60.0
 	retry:
 		max_attempts: 3
-		backoff_seconds: 0.25
+		backoff_seconds: 1
 ```
 
 Equivalent `.env` deployment configuration:

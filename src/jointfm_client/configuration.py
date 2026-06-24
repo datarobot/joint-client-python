@@ -117,7 +117,8 @@ class RetryConfig(_ConfigModel):
     """Default retry policy for transient HTTP failures."""
 
     max_attempts: int = 3
-    backoff_seconds: float = 0.25
+    backoff_seconds: float = 1
+    max_backoff_seconds: float = 30.0
     status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504)
 
     @field_validator("max_attempts")
@@ -132,6 +133,13 @@ class RetryConfig(_ConfigModel):
     def _validate_backoff_seconds(cls, value: float) -> float:
         if not math.isfinite(value) or value < 0.0:
             raise ValueError("backoff_seconds must be finite and non-negative")
+        return value
+
+    @field_validator("max_backoff_seconds")
+    @classmethod
+    def _validate_max_backoff_seconds(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError("max_backoff_seconds must be finite and positive")
         return value
 
     @field_validator("status_codes")
@@ -313,6 +321,7 @@ DEFAULT_CONNECT_TIMEOUT_SECONDS: Final = DEFAULT_TIMEOUT_CONFIG.connect_seconds
 DEFAULT_READ_TIMEOUT_SECONDS: Final = DEFAULT_TIMEOUT_CONFIG.read_seconds
 DEFAULT_MAX_ATTEMPTS: Final = DEFAULT_RETRY_CONFIG.max_attempts
 DEFAULT_BACKOFF_SECONDS: Final = DEFAULT_RETRY_CONFIG.backoff_seconds
+DEFAULT_MAX_BACKOFF_SECONDS: Final = DEFAULT_RETRY_CONFIG.max_backoff_seconds
 DEFAULT_RETRY_STATUS_CODES: Final = DEFAULT_RETRY_CONFIG.status_codes
 DEFAULT_RESPONSE_BODY_EXCERPT_CHARACTERS: Final = (
     DEFAULT_TRANSPORT_CONFIG.response_body_excerpt_characters
@@ -353,6 +362,7 @@ __all__ = [
     "DEFAULT_FORECAST_CONFIG",
     "DEFAULT_FORECAST_SCHEMA_VERSION",
     "DEFAULT_MAX_ATTEMPTS",
+    "DEFAULT_MAX_BACKOFF_SECONDS",
     "DEFAULT_ORDINAL_STEP",
     "DEFAULT_QUERY_MODE",
     "DEFAULT_READ_TIMEOUT_SECONDS",

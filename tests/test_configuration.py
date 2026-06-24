@@ -94,7 +94,7 @@ def test_load_configuration_layers_yaml_over_defaults(tmp_path: Path) -> None:
     assert config.transport.timeout.connect_seconds == 1.25
     assert config.transport.timeout.read_seconds == 60.0
     assert config.transport.retry.max_attempts == 2
-    assert config.transport.retry.backoff_seconds == 0.25
+    assert config.transport.retry.backoff_seconds == 1
     assert config.transport.retry.status_codes == (500,)
 
 

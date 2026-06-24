@@ -55,6 +55,7 @@ class JointFMResponseError(JointFMTransportError):
         response_body_excerpt: str,
         datarobot_request_id: str | None = None,
         jointfm_errors: Sequence[Mapping[str, Any]] = (),
+        retry_after_seconds: float | None = None,
     ) -> None:
         """Store HTTP metadata from one malformed or unsuccessful response."""
         super().__init__(message)
@@ -62,6 +63,7 @@ class JointFMResponseError(JointFMTransportError):
         self.response_body_excerpt = response_body_excerpt
         self.datarobot_request_id = datarobot_request_id
         self.jointfm_errors = tuple(jointfm_errors)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class JointFMResponseDecodeError(JointFMResponseError):
