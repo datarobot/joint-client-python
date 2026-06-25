@@ -268,6 +268,69 @@ def test_transport_retries_retryable_server_responses() -> None:
         server.server_close()
 
 
+def test_transport_retries_html_bodied_gateway_errors() -> None:
+    """A 502 with an nginx HTML body must be retried as an HTTP status error.
+
+    Regression: previously the decode step ran before the status check, so
+    HTML 5xx bodies became JointFMResponseDecodeError (non-retryable).
+    """
+    html_body = (
+        b"<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n"
+        b"<body>\r\n<center><h1>502 Bad Gateway</h1></center>\r\n"
+        b"<hr><center>nginx</center>\r\n</body>\r\n</html>"
+    )
+    server, handler = _start_html_then_json_server(
+        [(HTTPStatus.BAD_GATEWAY, html_body), (HTTPStatus.OK, b'{"ok": true}')]
+    )
+    try:
+        transport = JointFMHTTPTransport(
+            retry_config=JointFMRetryConfig(
+                max_attempts=2,
+                backoff_seconds=0.0,
+                max_backoff_seconds=0.01,
+            ),
+        )
+
+        result = transport.post_json(_server_url(server), {"schema_version": "v1"})
+
+        assert result == {"ok": True}
+        assert handler.request_count == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_transport_raises_status_error_when_gateway_html_persists() -> None:
+    """After exhausting retries on HTML 5xx, surface JointFMHTTPStatusError."""
+    html_body = (
+        b"<html><head><title>502 Bad Gateway</title></head>"
+        b"<body><center><h1>502 Bad Gateway</h1></center>"
+        b"<hr><center>nginx</center></body></html>"
+    )
+    server, handler = _start_html_then_json_server(
+        [(HTTPStatus.BAD_GATEWAY, html_body), (HTTPStatus.BAD_GATEWAY, html_body)]
+    )
+    try:
+        transport = JointFMHTTPTransport(
+            retry_config=JointFMRetryConfig(
+                max_attempts=2,
+                backoff_seconds=0.0,
+                max_backoff_seconds=0.01,
+            ),
+        )
+
+        with pytest.raises(JointFMHTTPStatusError) as exc_info:
+            transport.post_json(_server_url(server), {"schema_version": "v1"})
+
+        assert exc_info.value.status_code == HTTPStatus.BAD_GATEWAY
+        assert "502 Bad Gateway" in exc_info.value.response_body_excerpt
+        assert exc_info.value.jointfm_errors == ()
+        assert handler.request_count == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_retry_config_builds_expected_urllib3_policy() -> None:
     retry = JointFMRetryConfig(
         max_attempts=4,
@@ -886,6 +949,38 @@ def _start_json_server(
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, JSONHandler
+
+
+def _start_html_then_json_server(
+    responses: list[tuple[HTTPStatus, bytes]],
+) -> tuple[ThreadingHTTPServer, type[BaseHTTPRequestHandler]]:
+    """Serve a fixed sequence of (status, raw body) responses for POSTs.
+
+    Unlike `_start_json_server` this does not encode JSON internally — the
+    caller supplies the exact body bytes, including non-JSON payloads such as
+    the nginx HTML error pages that gateways return for 5xx responses.
+    """
+
+    class RawHandler(BaseHTTPRequestHandler):
+        request_count = 0
+
+        def do_POST(self) -> None:
+            type(self).request_count += 1
+            status, body = responses[type(self).request_count - 1]
+            content_type = "application/json" if body[:1] in (b"{", b"[") else "text/html"
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), RawHandler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, RawHandler
 
 
 def _server_url(server: ThreadingHTTPServer) -> str:

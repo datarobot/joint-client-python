@@ -217,19 +217,21 @@ class JointFMHTTPTransport:
         except requests.RequestException as error:
             raise JointFMRequestError(f"JointFM HTTP request failed: {error}") from error
 
-        response_payload = _decode_json_object(
+        # Surface HTTP errors as a retryable JointFMHTTPStatusError regardless
+        # of body shape: gateways often return text/html for 5xx, and that must
+        # not be misclassified as a non-retryable decode failure.
+        if response.status_code >= 400:
+            raise _http_status_error(
+                response,
+                _best_effort_decode_json_object(response),
+                response_body_excerpt_characters=self._response_body_excerpt_characters,
+                datarobot_request_id_headers=self._datarobot_request_id_headers,
+            )
+        return _decode_json_object(
             response,
             response_body_excerpt_characters=self._response_body_excerpt_characters,
             datarobot_request_id_headers=self._datarobot_request_id_headers,
         )
-        if response.status_code >= 400:
-            raise _http_status_error(
-                response,
-                response_payload,
-                response_body_excerpt_characters=self._response_body_excerpt_characters,
-                datarobot_request_id_headers=self._datarobot_request_id_headers,
-            )
-        return response_payload
 
 
 def _build_retry_predicate(
@@ -349,6 +351,23 @@ def _decode_json_object(
             datarobot_request_id=datarobot_request_id,
         )
     return response_payload
+
+
+def _best_effort_decode_json_object(response: requests.Response) -> Mapping[str, Any]:
+    """Return a JSON object from the body, or an empty mapping on any failure.
+
+    Used for HTTP error responses where the body may be HTML (gateway pages),
+    plain text, or a JSON array — the status code already carries the failure
+    signal, so we only want structured `errors` fields when the body happens
+    to be a JSON object.
+    """
+    try:
+        payload = response.json()
+    except ValueError:
+        return {}
+    if not isinstance(payload, Mapping):
+        return {}
+    return payload
 
 
 def _http_status_error(
