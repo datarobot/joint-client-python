@@ -1,3 +1,5 @@
+"""Tests for the cli surface of jointfm_client."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -12,6 +14,8 @@ from jointfm_client import cli
 
 
 class FakeHealthClient:
+    """Fake Health Client (test helper)."""
+
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
@@ -30,6 +34,7 @@ class FakeHealthClient:
     )
 
     def health(self) -> HealthMetadata:
+        """Health."""
         return HealthMetadata(
             status="ok",
             schema_version="v1",
@@ -53,16 +58,23 @@ class FakeHealthClient:
 
 
 class FakePredictClient:
+    """Fake Predict Client (test helper)."""
+
     def __init__(self) -> None:
+        """Init."""
         self.payload: Mapping[str, Any] | None = None
 
     def predict(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Predict."""
         self.payload = payload
         return {"ok": True, "model_version": payload["model_version"]}
 
 
 class FakeForecastResult:
+    """Fake Forecast Result (test helper)."""
+
     def to_pandas_tidy(self) -> pd.DataFrame:
+        """To pandas tidy."""
         return pd.DataFrame.from_records(
             [
                 {
@@ -75,17 +87,24 @@ class FakeForecastResult:
 
 
 class FakeForecastClient:
+    """Fake Forecast Client (test helper)."""
+
     def __init__(self) -> None:
+        """Init."""
         self.kwargs: dict[str, Any] | None = None
 
     def forecast(self, history: Any, **kwargs: Any) -> FakeForecastResult:
+        """Forecast."""
         self.kwargs = kwargs
         assert list(history.columns) == ["target"]
         return FakeForecastResult()
 
 
 def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli.JointFMClient, "from_env", lambda *, dotenv_path: FakeHealthClient())
+    """Health command prints non secret metadata."""
+    monkeypatch.setattr(
+        cli.JointFMClient, "from_env", lambda *, dotenv_path: FakeHealthClient()
+    )
 
     exit_code = cli.main(["health", "--no-dotenv"])
 
@@ -98,6 +117,7 @@ def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
 
 
 def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> None:
+    """Predict command writes response file."""
     client = FakePredictClient()
     monkeypatch.setattr(cli.JointFMClient, "from_env", lambda *, dotenv_path: client)
     request_file = tmp_path / "request.json"
@@ -112,7 +132,9 @@ def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> No
         encoding="utf-8",
     )
 
-    exit_code = cli.main(["predict", "--no-dotenv", str(request_file), str(response_file)])
+    exit_code = cli.main(
+        ["predict", "--no-dotenv", str(request_file), str(response_file)]
+    )
 
     assert exit_code == 0
     assert client.payload is not None
@@ -123,11 +145,14 @@ def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> No
 
 
 def test_predict_command_rejects_non_object_request(tmp_path: Path, capsys) -> None:
+    """Predict command rejects non object request."""
     request_file = tmp_path / "request.json"
     response_file = tmp_path / "response.json"
     request_file.write_text("[]", encoding="utf-8")
 
-    exit_code = cli.main(["predict", "--no-dotenv", str(request_file), str(response_file)])
+    exit_code = cli.main(
+        ["predict", "--no-dotenv", str(request_file), str(response_file)]
+    )
 
     assert exit_code == 2
     assert "must contain a JSON object" in capsys.readouterr().err
@@ -135,7 +160,10 @@ def test_predict_command_rejects_non_object_request(tmp_path: Path, capsys) -> N
 
 
 def test_command_errors_include_response_metadata(monkeypatch, capsys) -> None:
+    """Command errors include response metadata."""
+
     def raise_decode_error(*, dotenv_path: Path | None) -> None:
+        """Raise decode error."""
         del dotenv_path
         raise JointFMResponseDecodeError(
             "JointFM service returned a non-JSON response body",
@@ -157,6 +185,7 @@ def test_command_errors_include_response_metadata(monkeypatch, capsys) -> None:
 
 
 def test_forecast_csv_command_writes_tidy_output(monkeypatch, tmp_path: Path) -> None:
+    """Forecast csv command writes tidy output."""
     client = FakeForecastClient()
     monkeypatch.setattr(cli.JointFMClient, "from_env", lambda *, dotenv_path: client)
     history_file = tmp_path / "history.csv"

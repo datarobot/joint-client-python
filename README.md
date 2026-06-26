@@ -293,10 +293,124 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 
 ## Development Commands
 
-- `task lint`: run Ruff checks
+- `task lint`: run Ruff lint checks (read-only)
+- `task format`: run Ruff formatter (rewrites files in place)
 - `task typecheck`: run `ty` static type checks
 - `task test`: run unit tests
 - `task coverage`: run tests with coverage enforcement above 90%
 - `task build`: build the source distribution and wheel, then validate artifact metadata and contents
-- `task release-check`: run lint, type checks, coverage, and the validated build
+- `task check`: run the static code quality gate (typos, lint, format check, type checks)
+- `task release:dry`: preview the next SemVer bump without changing any files
+- `task release`: cut a SemVer release with Commitizen (writes `CHANGELOG.md`, bumps versions, creates tag)
 - `task pre-commit`: run every configured pre-commit hook
+
+## Versioning & Commits
+
+The package follows strict [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases are cut with [Commitizen](https://commitizen-tools.github.io/commitizen/), driven by [Conventional Commits](https://www.conventionalcommits.org/), so the commit log is the source of truth for what a release contains.
+
+### Commit message format
+
+Every commit subject must follow:
+
+```text
+<type>(<optional scope>): <imperative summary>
+```
+
+Examples:
+
+```text
+feat(adapters): add quantile forecast helper
+fix(transport): retry on idempotent 5xx responses
+perf(adapters): cache schema validation across forecast batches
+refactor(configuration): split URL resolution into helpers
+docs(readme): document the release workflow
+test(transport): cover retry on 502/503/504
+build(deps): bump pydantic to 2.13.4
+ci(pre-commit): pin commitizen to v3.31
+chore(repo): move fixtures to tests/fixtures/v1
+```
+
+#### Commit types
+
+The full set of accepted types comes from the `cz_conventional_commits` rule set referenced above. Pick the type that matches the **primary intent** of the commit; split commits that mix concerns. Only `feat`, `fix`, `refactor`, and `perf` (plus breaking-change markers) drive a SemVer bump — every other type is recorded in `git log` but does not, on its own, cause `cz bump` to cut a new version.
+
+| Type | When to use | SemVer bump |
+| --- | --- | --- |
+| `feat` | A user-visible feature: new public API, new CLI flag, new helper exposed to callers. | **minor** |
+| `fix` | A bug fix in shipped behavior — the symptom is observable to callers or operators. | **patch** |
+| `perf` | A change that improves performance without changing observable behavior. | **patch** |
+| `refactor` | An internal restructure that neither adds a feature nor fixes a bug (renames, moves, extractions, internal type changes). | **patch** |
+| `docs` | Documentation-only changes (READMEs, prose, docstrings, comments, example payloads, API reference). | none |
+| `test` | Adding, fixing, or restructuring tests, fixtures, or test helpers with no production-code change. | none |
+| `build` | Build system, packaging, or dependency-pinning changes (`pyproject.toml`, lockfile, wheel build hooks). | none |
+| `ci` | CI configuration changes (GitHub Actions workflows, `.pre-commit-config.yaml`, release hooks). | none |
+| `chore` | Repository maintenance not covered above (tooling tweaks, repo-level renames, housekeeping, fixture moves). | none |
+| `style` | Pure formatting or whitespace, no behavior change — rare here because Ruff format runs in pre-commit. | none |
+| `revert` | Reverts a previous commit; the body should include `Refs: <sha>`. Re-add `!` or a `BREAKING CHANGE:` footer if the reverted commit was a breaking change. | none |
+| any type with `!` or a `BREAKING CHANGE:` footer | A breaking change to public API, configuration schema, environment variables, or the V1 wire contract. | **major**¹ |
+
+¹ This project sets `major_version_zero = true` in `pyproject.toml`, so breaking changes are downgraded to a **minor** bump while the SDK is on `0.x`. They will become major bumps once the SDK ships `1.0.0`.
+
+A release window that contains only `none`-bump commits is not releasable on its own: `cz bump` exits without writing a new version. Either land a `feat`/`fix`/`refactor`/`perf` first, or force the bump explicitly with `task release -- --increment PATCH`.
+
+#### Breaking changes
+
+Declare a breaking change with `!` after the type, e.g. `feat(adapters)!: rename forecast() to predict()`, or — preferred when the change needs explanation — with an explicit footer:
+
+```text
+feat(adapters): rename forecast() to predict()
+
+BREAKING CHANGE: forecast() is gone; callers must use predict().
+```
+
+The `commit-msg` pre-commit hook runs `cz check` and rejects malformed messages locally before the commit is created.
+
+### First-time tag seed (one-off)
+
+Commitizen bumps **from** the tag matching the current `version =` in `pyproject.toml`. A brand-new repo has no such tag, so the first `task release` or `task release:dry` will fail with a clear message. Seed it once:
+
+```bash
+git tag -a v0.0.1 -m 'Seed initial release tag for Commitizen'
+git push --tags
+```
+
+After that, every future `task release` finds its base tag automatically.
+
+### Cutting a release
+
+```bash
+task release:dry      # preview the next version + CHANGELOG entries
+task release          # bump, write CHANGELOG.md, create the annotated tag
+git push && git push --tags
+```
+
+`task release` first runs `task release:check` (clean tree, on `main`, in sync with `origin/main`), then calls `cz bump` which:
+
+- reads commits since the last `v*` tag,
+- picks the SemVer bump from the types it sees,
+- updates `CHANGELOG.md`,
+- bumps `version =` in `pyproject.toml`, `__version__` in `src/jointfm_client/__init__.py`, and the "Current SDK package version" line in this README,
+- commits the bump and creates the annotated tag.
+
+Pushing is left manual so you can inspect the bump first. Override the inferred bump level only when needed: `task release -- --increment minor`.
+
+When `jointfm-client` is later published to PyPI, this same tag push is what will trigger the wheel build and upload from CI — keeping the git tag, the wheel filename, `jointfm_client.__version__`, and the PyPI version all in lockstep.
+
+After pulling these changes for the first time, run `uv run pre-commit install` (or `task setup`) once so the new `commit-msg` hook is registered with git.
+
+### Hand-editing the version (don't)
+
+The `version =` line in [`pyproject.toml`](pyproject.toml), `__version__` in [`src/jointfm_client/__init__.py`](src/jointfm_client/__init__.py), and the "Current SDK package version" line in this README are **owned by `cz bump`** — treat them the way you'd treat a lockfile. Each release rewrites all of them atomically.
+
+If you hand-edit them, the next `task release` will catch you:
+
+- if you bumped only some lines, `cz bump` aborts with "Configured files cannot be updated, check consistency";
+- if you bumped them all but never created the matching `vX.Y.Z` tag, `task release:require-tag` refuses to run and tells you to seed the tag.
+
+If you genuinely need to set a specific version outside the normal release flow (bootstrap, recovery from a botched state), use the escape hatch:
+
+```bash
+uv run cz bump --files-only X.Y.Z
+```
+
+That atomically rewrites every `version_files` line to `X.Y.Z` without committing or tagging. After it returns, commit and tag manually.

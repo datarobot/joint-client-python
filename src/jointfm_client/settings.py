@@ -310,7 +310,9 @@ def normalize_deployment_id(value: str) -> str:
 def build_hosted_deployment_url(datarobot_endpoint: str, deployment_id: str) -> str:
     """Build the hosted DataRobot deployment URL for one deployment ID."""
 
-    service_base_url = normalize_datarobot_endpoint(datarobot_endpoint).rstrip("/") + "/"
+    service_base_url = (
+        normalize_datarobot_endpoint(datarobot_endpoint).rstrip("/") + "/"
+    )
     normalized_deployment_id = normalize_deployment_id(deployment_id)
     return urljoin(service_base_url, f"deployments/{normalized_deployment_id}")
 
@@ -318,7 +320,9 @@ def build_hosted_deployment_url(datarobot_endpoint: str, deployment_id: str) -> 
 def build_hosted_predict_url(datarobot_endpoint: str, deployment_id: str) -> str:
     """Build the hosted DataRobot unstructured prediction URL."""
 
-    service_base_url = normalize_datarobot_endpoint(datarobot_endpoint).rstrip("/") + "/"
+    service_base_url = (
+        normalize_datarobot_endpoint(datarobot_endpoint).rstrip("/") + "/"
+    )
     normalized_deployment_id = normalize_deployment_id(deployment_id)
     predict_route = DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE.format(
         deployment_id=normalized_deployment_id
@@ -350,7 +354,9 @@ def build_hosted_predict_url_from_deployment_url(deployment_url: str) -> str:
     """Build the hosted prediction URL from a hosted deployment URL."""
 
     normalized_deployment_url = normalize_hosted_deployment_url(deployment_url)
-    return urljoin(normalized_deployment_url.rstrip("/") + "/", "predictionsUnstructured")
+    return urljoin(
+        normalized_deployment_url.rstrip("/") + "/", "predictionsUnstructured"
+    )
 
 
 def deployment_id_from_hosted_deployment_url(deployment_url: str) -> str:
@@ -469,7 +475,7 @@ def _resolve_single_deployment_selector(
     if len(selector_names) != 1:
         formatted_selectors = ", ".join(deployment_selector_envs)
         raise JointFMConfigurationError(
-            "Exactly one deployment selector is required: " f"{formatted_selectors}"
+            f"Exactly one deployment selector is required: {formatted_selectors}"
         )
     return selector_names[0]
 

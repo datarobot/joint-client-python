@@ -1,3 +1,5 @@
+"""Tests for the configuration surface of jointfm_client."""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +29,8 @@ from jointfm_client import (
 
 
 class _HealthTransport:
+    """Health Transport (test helper)."""
+
     _METADATA: dict[str, object] = {
         "status": "ok",
         "schema_version": "v1",
@@ -49,10 +53,12 @@ class _HealthTransport:
     }
 
     def get_json(self, url: str) -> dict[str, object]:
+        """Get json."""
         del url
         return dict(self._METADATA)
 
     def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, object]:
+        """Post json."""
         del url
         if payload.get("request_type") == "health":
             return dict(self._METADATA)
@@ -60,15 +66,20 @@ class _HealthTransport:
 
 
 def test_checked_in_yaml_sample_matches_configuration_defaults() -> None:
+    """Checked in yaml sample matches configuration defaults."""
     repo_root = Path(__file__).parents[1]
     expected_defaults = JointFMConfig().model_dump(mode="json")
     config_path = repo_root / "config.sample.yaml"
 
     assert yaml.safe_load(config_path.read_text(encoding="utf-8")) == expected_defaults
-    assert load_configuration(config_path=config_path).model_dump(mode="json") == expected_defaults
+    assert (
+        load_configuration(config_path=config_path).model_dump(mode="json")
+        == expected_defaults
+    )
 
 
 def test_load_configuration_layers_yaml_over_defaults(tmp_path: Path) -> None:
+    """Load configuration layers yaml over defaults."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         "\n".join(
@@ -99,14 +110,20 @@ def test_load_configuration_layers_yaml_over_defaults(tmp_path: Path) -> None:
 
 
 def test_load_configuration_rejects_unknown_keys(tmp_path: Path) -> None:
+    """Load configuration rejects unknown keys."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text("transport:\n  unknown: true\n", encoding="utf-8")
 
-    with pytest.raises(JointFMConfigurationError, match="Invalid JointFM configuration"):
+    with pytest.raises(
+        JointFMConfigurationError, match="Invalid JointFM configuration"
+    ):
         load_configuration(config_path=config_path)
 
 
-def test_load_settings_layers_config_below_dotenv_and_environment(tmp_path: Path) -> None:
+def test_load_settings_layers_config_below_dotenv_and_environment(
+    tmp_path: Path,
+) -> None:
+    """Load settings layers config below dotenv and environment."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -150,6 +167,7 @@ def test_client_from_env_uses_transport_defaults_from_config(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """Client from env uses transport defaults from config."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -196,6 +214,7 @@ def test_client_from_env_uses_transport_defaults_from_config(
             "X-DataRobot-Execution-ID",
         ),
     ) -> _HealthTransport:
+        """Capture transport."""
         del settings, session, user_agent
         nonlocal captured_timeout, captured_retry_config
         nonlocal captured_response_body_excerpt_characters
@@ -215,7 +234,9 @@ def test_client_from_env_uses_transport_defaults_from_config(
     client = JointFMClient.from_env(env={}, dotenv_path=None, config_path=config_path)
 
     assert client.health().model_version == "jointfm-inference:0.2.0+ckpt.yaml"
-    assert captured_timeout == JointFMTimeoutConfig(connect_seconds=1.0, read_seconds=2.0)
+    assert captured_timeout == JointFMTimeoutConfig(
+        connect_seconds=1.0, read_seconds=2.0
+    )
     assert captured_retry_config == JointFMRetryConfig(
         max_attempts=2,
         backoff_seconds=0.1,
@@ -227,6 +248,7 @@ def test_client_from_env_uses_transport_defaults_from_config(
 
 
 def test_configuration_override_mapping_wins_over_yaml(tmp_path: Path) -> None:
+    """Configuration override mapping wins over yaml."""
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         json.dumps({"transport": {"retry": {"max_attempts": 2}}}),

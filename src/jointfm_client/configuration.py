@@ -51,8 +51,14 @@ class EnvironmentVariableConfig(_ConfigModel):
     @field_validator("*")
     @classmethod
     def _validate_environment_name(cls, value: str) -> str:
-        if value == "" or value.strip() != value or any(character.isspace() for character in value):
-            raise ValueError("environment variable names must be non-empty and whitespace-free")
+        if (
+            value == ""
+            or value.strip() != value
+            or any(character.isspace() for character in value)
+        ):
+            raise ValueError(
+                "environment variable names must be non-empty and whitespace-free"
+            )
         return value
 
     def deployment_selector_names(self) -> tuple[str, str, str, str, str]:
@@ -86,14 +92,22 @@ class HostedDeploymentConfig(_ConfigModel):
     ) -> dict[str, str]:
         """Return configured deployment values keyed by their environment names."""
         values: dict[str, str] = {}
-        _set_if_configured(values, environment.datarobot_endpoint, self.datarobot_endpoint)
-        _set_if_configured(values, environment.datarobot_api_token, self.datarobot_api_token)
+        _set_if_configured(
+            values, environment.datarobot_endpoint, self.datarobot_endpoint
+        )
+        _set_if_configured(
+            values, environment.datarobot_api_token, self.datarobot_api_token
+        )
         _set_if_configured(values, environment.deployment_id, self.deployment_id)
         _set_if_configured(values, environment.deployment_url, self.deployment_url)
         _set_if_configured(values, environment.predict_url, self.predict_url)
-        _set_if_configured(values, environment.deployment_target, self.deployment_target)
+        _set_if_configured(
+            values, environment.deployment_target, self.deployment_target
+        )
         _set_if_configured(values, environment.local_base_url, self.local_base_url)
-        _set_if_configured(values, environment.pulumi_outputs_path, self.pulumi_outputs_path)
+        _set_if_configured(
+            values, environment.pulumi_outputs_path, self.pulumi_outputs_path
+        )
         _set_if_configured(values, environment.schema_version, self.schema_version)
         _set_if_configured(values, environment.model_version, self.model_version)
         return values
@@ -201,7 +215,9 @@ class ForecastConfig(_ConfigModel):
     calendar_id: str = DEFAULT_CALENDAR_ID
     ordinal_step: int = 1
 
-    @field_validator("schema_version", "query_mode", "return_mode", "time_index_mode", "calendar_id")
+    @field_validator(
+        "schema_version", "query_mode", "return_mode", "time_index_mode", "calendar_id"
+    )
     @classmethod
     def _validate_plain_string(cls, value: str) -> str:
         if value == "" or value.strip() != value:
@@ -234,7 +250,9 @@ class JointFMConfig(_ConfigModel):
     """Top-level SDK configuration loaded from defaults and optional YAML."""
 
     paths: PathConfig = Field(default_factory=PathConfig)
-    environment: EnvironmentVariableConfig = Field(default_factory=EnvironmentVariableConfig)
+    environment: EnvironmentVariableConfig = Field(
+        default_factory=EnvironmentVariableConfig
+    )
     deployment: HostedDeploymentConfig = Field(default_factory=HostedDeploymentConfig)
     transport: TransportConfig = Field(default_factory=TransportConfig)
     forecast: ForecastConfig = Field(default_factory=ForecastConfig)
@@ -254,7 +272,9 @@ def load_configuration(
     try:
         return JointFMConfig.model_validate(payload)
     except ValidationError as error:
-        raise JointFMConfigurationError(f"Invalid JointFM configuration: {error}") from error
+        raise JointFMConfigurationError(
+            f"Invalid JointFM configuration: {error}"
+        ) from error
 
 
 def _read_yaml_mapping(config_path: str | Path | None) -> dict[str, Any]:
@@ -266,18 +286,26 @@ def _read_yaml_mapping(config_path: str | Path | None) -> dict[str, Any]:
     try:
         raw_payload = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as error:
-        raise JointFMConfigurationError(f"Unable to read configuration file {path}") from error
+        raise JointFMConfigurationError(
+            f"Unable to read configuration file {path}"
+        ) from error
     except YAMLError as error:
-        raise JointFMConfigurationError(f"Configuration file {path} must contain valid YAML") from error
+        raise JointFMConfigurationError(
+            f"Configuration file {path} must contain valid YAML"
+        ) from error
 
     if raw_payload is None:
         return {}
     if not isinstance(raw_payload, Mapping):
-        raise JointFMConfigurationError(f"Configuration file {path} must contain a YAML mapping")
+        raise JointFMConfigurationError(
+            f"Configuration file {path} must contain a YAML mapping"
+        )
     return dict(raw_payload)
 
 
-def _override_payload(overrides: JointFMConfig | Mapping[str, Any] | None) -> dict[str, Any]:
+def _override_payload(
+    overrides: JointFMConfig | Mapping[str, Any] | None,
+) -> dict[str, Any]:
     if overrides is None:
         return {}
     if isinstance(overrides, JointFMConfig):
@@ -290,7 +318,11 @@ def _override_payload(overrides: JointFMConfig | Mapping[str, Any] | None) -> di
 def _deep_merge(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
     merged: dict[str, Any] = dict(base)
     for key, override_value in override.items():
-        if key in merged and isinstance(merged[key], Mapping) and isinstance(override_value, Mapping):
+        if (
+            key in merged
+            and isinstance(merged[key], Mapping)
+            and isinstance(override_value, Mapping)
+        ):
             merged[key] = _deep_merge(merged[key], override_value)
             continue
         merged[key] = override_value
@@ -327,7 +359,9 @@ DEFAULT_RESPONSE_BODY_EXCERPT_CHARACTERS: Final = (
     DEFAULT_TRANSPORT_CONFIG.response_body_excerpt_characters
 )
 DEFAULT_RETRYABLE_METHODS: Final = DEFAULT_TRANSPORT_CONFIG.retryable_methods
-DATAROBOT_REQUEST_ID_HEADERS: Final = DEFAULT_TRANSPORT_CONFIG.datarobot_request_id_headers
+DATAROBOT_REQUEST_ID_HEADERS: Final = (
+    DEFAULT_TRANSPORT_CONFIG.datarobot_request_id_headers
+)
 USER_AGENT_HEADER: Final = DEFAULT_TRANSPORT_CONFIG.user_agent_header
 
 DEFAULT_FORECAST_CONFIG: Final = ForecastConfig()
@@ -335,7 +369,9 @@ DEFAULT_FORECAST_SCHEMA_VERSION: Final = DEFAULT_FORECAST_CONFIG.schema_version
 DEFAULT_QUERY_MODE: Final = DEFAULT_FORECAST_CONFIG.query_mode
 DEFAULT_RETURN_MODE: Final = DEFAULT_FORECAST_CONFIG.return_mode
 DEFAULT_TIME_INDEX_MODE: Final = DEFAULT_FORECAST_CONFIG.time_index_mode
-DEFAULT_USE_LOCAL_NORMALIZED_TIME: Final = DEFAULT_FORECAST_CONFIG.use_local_normalized_time
+DEFAULT_USE_LOCAL_NORMALIZED_TIME: Final = (
+    DEFAULT_FORECAST_CONFIG.use_local_normalized_time
+)
 DEFAULT_ORDINAL_STEP: Final = DEFAULT_FORECAST_CONFIG.ordinal_step
 
 DEFAULT_CLI_CONFIG: Final = CLIConfig()

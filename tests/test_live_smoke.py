@@ -1,3 +1,5 @@
+"""Tests for the live smoke surface of jointfm_client."""
+
 from __future__ import annotations
 
 import os
@@ -23,6 +25,7 @@ _REQUIRED_LIVE_ENV_NAMES = (
 
 
 def test_live_datarobot_health_smoke() -> None:
+    """Live datarobot health smoke."""
     dotenv_path = Path(".env")
     dotenv_values_map = _dotenv_strings(dotenv_path)
     merged_env = dict(dotenv_values_map)
@@ -41,7 +44,9 @@ def test_live_datarobot_health_smoke() -> None:
     ]
     if missing:
         pytest.skip(
-            "Live hosted smoke test requires " + ", ".join(missing) + " in the environment or .env"
+            "Live hosted smoke test requires "
+            + ", ".join(missing)
+            + " in the environment or .env"
         )
 
     client = JointFMClient.from_env(
@@ -57,6 +62,7 @@ def test_live_datarobot_health_smoke() -> None:
 
 
 def _dotenv_strings(dotenv_path: Path) -> dict[str, str]:
+    """Dotenv strings."""
     if not dotenv_path.exists():
         return {}
 

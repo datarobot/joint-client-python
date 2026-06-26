@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable
 import configparser
 from email import policy
 from email.parser import BytesParser
@@ -95,7 +96,7 @@ def _archive_distribution_name(distribution_name: str) -> str:
     return re.sub(r"[-_.]+", "_", distribution_name).lower()
 
 
-def _expect_one(paths: object, description: str) -> Path:
+def _expect_one(paths: Iterable[Path], description: str) -> Path:
     matches = sorted(paths)
     if len(matches) != 1:
         raise SystemExit(f"Expected exactly one {description}, found {len(matches)}")
@@ -140,24 +141,37 @@ def _validate_wheel_metadata(
     project_metadata: dict[str, str],
 ) -> None:
     metadata = BytesParser(policy=policy.default).parsebytes(metadata_bytes)
-    _require(metadata["Name"] == project_metadata["name"], "wheel metadata name mismatch")
-    _require(metadata["Version"] == project_metadata["version"], "wheel metadata version mismatch")
-    _require(metadata["Summary"] == project_metadata["description"], "wheel metadata summary mismatch")
+    _require(
+        metadata["Name"] == project_metadata["name"], "wheel metadata name mismatch"
+    )
+    _require(
+        metadata["Version"] == project_metadata["version"],
+        "wheel metadata version mismatch",
+    )
+    _require(
+        metadata["Summary"] == project_metadata["description"],
+        "wheel metadata summary mismatch",
+    )
     _require(
         metadata["Requires-Python"] == project_metadata["requires_python"],
         "wheel metadata Python requirement mismatch",
     )
     license_value = metadata.get("License-Expression") or metadata.get("License")
-    _require(license_value == project_metadata["license"], "wheel metadata license mismatch")
+    _require(
+        license_value == project_metadata["license"], "wheel metadata license mismatch"
+    )
     classifiers = metadata.get_all("Classifier", [])
-    _require("Typing :: Typed" in classifiers, "wheel metadata must advertise typed package")
+    _require(
+        "Typing :: Typed" in classifiers, "wheel metadata must advertise typed package"
+    )
 
 
 def _validate_wheel_entry_points(entry_points_text: str) -> None:
     entry_points = configparser.ConfigParser()
     entry_points.read_string(entry_points_text)
     _require(
-        entry_points.get("console_scripts", CONSOLE_SCRIPT_NAME) == CONSOLE_SCRIPT_TARGET,
+        entry_points.get("console_scripts", CONSOLE_SCRIPT_NAME)
+        == CONSOLE_SCRIPT_TARGET,
         "wheel console script entry point mismatch",
     )
 
@@ -179,7 +193,10 @@ def _validate_sdist(sdist_path: Path, archive_name: str, package_version: str) -
             f"sdist includes forbidden member: {relative_member}",
         )
         _require(
-            not any(relative_member.startswith(prefix) for prefix in FORBIDDEN_SDIST_PREFIXES),
+            not any(
+                relative_member.startswith(prefix)
+                for prefix in FORBIDDEN_SDIST_PREFIXES
+            ),
             f"sdist includes forbidden member: {relative_member}",
         )
 

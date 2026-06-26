@@ -1,3 +1,5 @@
+"""Tests for the notebooks surface of jointfm_client."""
+
 from __future__ import annotations
 
 import json
@@ -11,6 +13,7 @@ from jointfm_client import bootstrap_notebook, resolve_notebook_project_root
 
 
 def _make_workspace(tmp_path: Path) -> tuple[Path, Path]:
+    """Make workspace."""
     repo_root = tmp_path / "joint-client-python"
     repo_root.mkdir()
     (repo_root / "Taskfile.yaml").write_text("version: '3'\n", encoding="utf-8")
@@ -28,6 +31,7 @@ def test_resolve_notebook_project_root_from_nested_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Resolve notebook project root from nested dir."""
     repo_root, notebook_dir = _make_workspace(tmp_path)
 
     monkeypatch.chdir(notebook_dir)
@@ -39,6 +43,7 @@ def test_resolve_notebook_project_root_from_foreign_src_layout(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Resolve notebook project root from foreign src layout."""
     repo_root = tmp_path / "instant-portfolio-optimization"
     notebook_dir = repo_root / "notebooks"
 
@@ -59,6 +64,7 @@ def test_bootstrap_notebook_changes_dir_and_adds_src_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Bootstrap notebook changes dir and adds src root."""
     repo_root, notebook_dir = _make_workspace(tmp_path)
     src_root = repo_root / "src"
     original_sys_path = list(sys.path)
@@ -82,6 +88,7 @@ def test_bootstrap_notebook_changes_dir_and_adds_src_root(
 def test_resolve_notebook_project_root_raises_outside_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Resolve notebook project root raises outside workspace."""
     with tempfile.TemporaryDirectory() as temp_dir:
         outside_dir = Path(temp_dir).resolve()
 
@@ -92,6 +99,7 @@ def test_resolve_notebook_project_root_raises_outside_workspace(
 
 
 def test_example_notebooks_start_with_bootstrap_cell() -> None:
+    """Example notebooks start with bootstrap cell."""
     repo_root = Path(__file__).resolve().parents[1]
     notebook_paths = sorted((repo_root / "notebooks").glob("*.ipynb"))
     expected_bootstrap_source = (
@@ -117,9 +125,7 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
         assert first_cell["metadata"]["language"] == "python"
         first_source = "\n".join(line.rstrip("\n") for line in first_cell["source"])
         assert first_source == expected_bootstrap_source
-        full_source = "\n".join(
-            "".join(cell["source"]) for cell in payload["cells"]
-        )
+        full_source = "\n".join("".join(cell["source"]) for cell in payload["cells"])
         assert "secret-token" not in full_source
         assert "DATAROBOT_API_TOKEN=" not in full_source
         if notebook_path.name == "forecast_csv.ipynb":

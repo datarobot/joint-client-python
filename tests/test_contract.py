@@ -1,3 +1,5 @@
+"""Tests for the contract surface of jointfm_client."""
+
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -52,6 +54,7 @@ from jointfm_client import (
 
 
 def _health_metadata() -> dict[str, object]:
+    """Health metadata."""
     return {
         "status": "ok",
         "schema_version": "v1",
@@ -86,6 +89,7 @@ def _health_metadata() -> dict[str, object]:
 
 
 def test_package_identity_contract() -> None:
+    """Package identity contract."""
     assert DISTRIBUTION_NAME == "jointfm-client"
     assert IMPORT_NAMESPACE == "jointfm_client"
     assert FIRST_SUPPORTED_PYTHON_VERSION == "3.13"
@@ -93,6 +97,7 @@ def test_package_identity_contract() -> None:
 
 
 def test_service_route_contract() -> None:
+    """Service route contract."""
     assert DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE == (
         "deployments/{deployment_id}/predictionsUnstructured"
     )
@@ -101,6 +106,7 @@ def test_service_route_contract() -> None:
 
 
 def test_mode_and_error_contract() -> None:
+    """Mode and error contract."""
     assert SUPPORTED_QUERY_MODES == ("forecast",)
     assert SUPPORTED_RETURN_MODES == ("mean", "samples", "quantiles", "log_prob")
     assert SUPPORTED_TIME_INDEX_MODES == (
@@ -131,6 +137,7 @@ def test_mode_and_error_contract() -> None:
 
 
 def test_column_spec_serializes_supported_metadata() -> None:
+    """Column spec serializes supported metadata."""
     categorical_column = ColumnSpec(
         name="segment",
         modality="categorical",
@@ -175,6 +182,7 @@ def test_column_spec_serializes_supported_metadata() -> None:
 
 
 def test_column_spec_rejects_invalid_time_value_metadata() -> None:
+    """Column spec rejects invalid time value metadata."""
     with pytest.raises(ValueError, match="time_value options"):
         ColumnSpec(
             name="feature",
@@ -192,6 +200,7 @@ def test_column_spec_rejects_invalid_time_value_metadata() -> None:
 
 
 def test_forecast_payload_matches_service_contract_without_mutating_inputs() -> None:
+    """Forecast payload matches service contract without mutating inputs."""
     timestamp = datetime(2026, 1, 5, tzinfo=timezone.utc)
     history_rows = [
         {
@@ -260,6 +269,7 @@ def test_forecast_payload_matches_service_contract_without_mutating_inputs() -> 
 
 
 def test_forecast_payload_preserves_non_datetime_query_values() -> None:
+    """Forecast payload preserves non datetime query values."""
     ordinal_schema = DataFrameSchema(
         columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
         time_index_mode="ordinal",
@@ -288,6 +298,7 @@ def test_forecast_payload_preserves_non_datetime_query_values() -> None:
 
 
 def test_dataframe_payload_matches_service_forecast_request_shape() -> None:
+    """Dataframe payload matches service forecast request shape."""
     frame = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
@@ -363,6 +374,7 @@ def test_dataframe_payload_matches_service_forecast_request_shape() -> None:
 
 
 def test_dataframe_inference_handles_roles_mappings_bounds_and_time_values() -> None:
+    """Dataframe inference handles roles mappings bounds and time values."""
     frame = pd.DataFrame(
         {
             "timestamp": pd.to_datetime(
@@ -423,6 +435,7 @@ def test_dataframe_inference_handles_roles_mappings_bounds_and_time_values() -> 
 
 
 def test_array_payload_builds_ordered_rows_with_metadata() -> None:
+    """Array payload builds ordered rows with metadata."""
     columns = (
         ColumnSpec(name="target", modality="numeric", role="target"),
         ColumnSpec(
@@ -459,6 +472,7 @@ def test_array_payload_builds_ordered_rows_with_metadata() -> None:
 
 
 def test_arrays_to_history_rows_requires_time_values_with_time_column() -> None:
+    """Arrays to history rows requires time values with time column."""
     with pytest.raises(ValueError, match="provided together"):
         arrays_to_history_rows(
             [[1.0]],
@@ -468,6 +482,7 @@ def test_arrays_to_history_rows_requires_time_values_with_time_column() -> None:
 
 
 def test_query_time_builders_and_horizon_validation() -> None:
+    """Query time builders and horizon validation."""
     assert build_datetime_query_times(
         ["2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"],
         periods=2,
@@ -492,6 +507,7 @@ def test_query_time_builders_and_horizon_validation() -> None:
 
 
 def test_dataframe_adapter_rejects_invalid_frames_and_column_options() -> None:
+    """Dataframe adapter rejects invalid frames and column options."""
     with pytest.raises(ValueError, match="pandas DataFrame"):
         infer_column_specs_from_dataframe([], time_column="timestamp")
 
@@ -499,7 +515,9 @@ def test_dataframe_adapter_rejects_invalid_frames_and_column_options() -> None:
         infer_column_specs_from_dataframe(pd.DataFrame({"target": []}))
 
     with pytest.raises(ValueError, match="time_column"):
-        infer_column_specs_from_dataframe(pd.DataFrame({"target": [1.0]}), time_column="timestamp")
+        infer_column_specs_from_dataframe(
+            pd.DataFrame({"target": [1.0]}), time_column="timestamp"
+        )
 
     with pytest.raises(ValueError, match="non-time column"):
         infer_column_specs_from_dataframe(
@@ -522,6 +540,7 @@ def test_dataframe_adapter_rejects_invalid_frames_and_column_options() -> None:
 
 
 def test_dataframe_adapter_infers_extra_modalities_and_roles() -> None:
+    """Dataframe adapter infers extra modalities and roles."""
     frame = pd.DataFrame(
         {
             "target": [1.0, 2.0],
@@ -550,6 +569,7 @@ def test_dataframe_adapter_infers_extra_modalities_and_roles() -> None:
 
 
 def test_dataframe_history_rows_reject_bad_values() -> None:
+    """Dataframe history rows reject bad values."""
     schema = DataFrameSchema(
         columns=(ColumnSpec(name="target", modality="numeric"),),
         time_index_mode="ordinal",
@@ -585,6 +605,7 @@ def test_dataframe_history_rows_reject_bad_values() -> None:
 
 
 def test_array_adapter_rejects_invalid_shapes_and_time_values() -> None:
+    """Array adapter rejects invalid shapes and time values."""
     columns = (ColumnSpec(name="target", modality="numeric"),)
 
     with pytest.raises(ValueError, match="two-dimensional"):
@@ -615,6 +636,7 @@ def test_array_adapter_rejects_invalid_shapes_and_time_values() -> None:
 
 
 def test_query_builders_reject_invalid_inputs() -> None:
+    """Query builders reject invalid inputs."""
     assert build_datetime_query_times(
         ["2026-01-01T00:00:00Z"],
         periods=2,
@@ -641,6 +663,7 @@ def test_query_builders_reject_invalid_inputs() -> None:
 
 
 def test_forecast_request_rejects_service_validation_edges() -> None:
+    """Forecast request rejects service validation edges."""
     schema = DataFrameSchema(
         columns=(
             ColumnSpec(name="known_feature", modality="numeric"),
@@ -709,6 +732,7 @@ def test_forecast_request_rejects_service_validation_edges() -> None:
 
 
 def test_dataframe_schema_rejects_absolute_datetime_without_time_column() -> None:
+    """Dataframe schema rejects absolute datetime without time column."""
     with pytest.raises(ValueError, match="time_column"):
         DataFrameSchema(
             columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
@@ -717,6 +741,7 @@ def test_dataframe_schema_rejects_absolute_datetime_without_time_column() -> Non
 
 
 def test_health_and_response_models_parse_current_payloads() -> None:
+    """Health and response models parse current payloads."""
     health = HealthMetadata.from_payload(_health_metadata())
     response = ForecastResponse.from_payload(
         {
@@ -749,6 +774,7 @@ def test_health_and_response_models_parse_current_payloads() -> None:
 
 
 def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -> None:
+    """Forecast result conversion helpers cover mean samples and quantiles."""
     mean_result = ForecastResponse.from_payload(
         {
             "schema_version": "v1",
@@ -866,6 +892,7 @@ def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -
 
 
 def test_forecast_response_validates_request_scoped_shapes() -> None:
+    """Forecast response validates request scoped shapes."""
     request_payload = {
         "schema_version": "v1",
         "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
@@ -902,6 +929,7 @@ def test_forecast_response_validates_request_scoped_shapes() -> None:
 
 
 def test_forecast_response_raises_typed_error_for_success_payload_errors() -> None:
+    """Forecast response raises typed error for success payload errors."""
     with pytest.raises(JointFMServiceError) as exc_info:
         ForecastResponse.from_payload(
             {
@@ -932,6 +960,7 @@ def test_forecast_response_raises_typed_error_for_success_payload_errors() -> No
 
 
 def test_validate_service_metadata_accepts_current_v1_contract() -> None:
+    """Validate service metadata accepts current v1 contract."""
     validate_service_metadata(
         _health_metadata(),
         expected_model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
@@ -939,6 +968,7 @@ def test_validate_service_metadata_accepts_current_v1_contract() -> None:
 
 
 def test_validate_service_metadata_rejects_schema_mismatch() -> None:
+    """Validate service metadata rejects schema mismatch."""
     metadata = _health_metadata()
     metadata["schema_version"] = "v2"
 
@@ -947,6 +977,7 @@ def test_validate_service_metadata_rejects_schema_mismatch() -> None:
 
 
 def test_validate_service_metadata_rejects_model_mismatch() -> None:
+    """Validate service metadata rejects model mismatch."""
     with pytest.raises(UnsupportedModelVersionError, match="model_version"):
         validate_service_metadata(
             _health_metadata(),
@@ -955,6 +986,7 @@ def test_validate_service_metadata_rejects_model_mismatch() -> None:
 
 
 def test_validate_service_metadata_rejects_unknown_advertised_mode() -> None:
+    """Validate service metadata rejects unknown advertised mode."""
     metadata = _health_metadata()
     metadata["supported_return_modes"] = [
         "mean",
@@ -969,6 +1001,7 @@ def test_validate_service_metadata_rejects_unknown_advertised_mode() -> None:
 
 
 def test_validate_service_metadata_rejects_malformed_capabilities() -> None:
+    """Validate service metadata rejects malformed capabilities."""
     metadata = _health_metadata()
     metadata["supported_query_modes"] = "forecast"
 
@@ -983,6 +1016,7 @@ def test_validate_service_metadata_rejects_malformed_capabilities() -> None:
 
 
 def test_validate_service_metadata_rejects_missing_model_version() -> None:
+    """Validate service metadata rejects missing model version."""
     metadata = _health_metadata()
     metadata["model_version"] = ""
 
@@ -991,6 +1025,7 @@ def test_validate_service_metadata_rejects_missing_model_version() -> None:
 
 
 def test_jointfm_client_methods_fail_fast_without_configuration() -> None:
+    """Jointfm client methods fail fast without configuration."""
     client = JointFMClient()
 
     with pytest.raises(JointFMConfigurationError, match="health"):
@@ -1004,14 +1039,21 @@ def test_jointfm_client_methods_fail_fast_without_configuration() -> None:
 
 
 def test_forecast_convenience_methods_share_forecast_path() -> None:
+    """Forecast convenience methods share forecast path."""
+
     class RecordingTransport:
+        """Recording Transport (test helper)."""
+
         def __init__(self) -> None:
+            """Init."""
             self.return_modes: list[str] = []
 
         def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
             raise AssertionError(f"unexpected health call to {url}")
 
         def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
             del url
             return_mode = payload["return_mode"]
             assert isinstance(return_mode, str)
@@ -1019,6 +1061,7 @@ def test_forecast_convenience_methods_share_forecast_path() -> None:
             return _forecast_response_payload(return_mode=return_mode)
 
     def _forecast_response_payload(*, return_mode: str) -> dict[str, object]:
+        """Forecast response payload."""
         return {
             "schema_version": "v1",
             "image_version": "0.2.0",

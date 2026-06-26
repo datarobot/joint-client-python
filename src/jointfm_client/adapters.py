@@ -78,7 +78,9 @@ def infer_column_specs_from_dataframe(
             if categorical_mappings is None
             else tuple(categorical_mappings),
             "ordinal_columns": ordinal_columns,
-            "ordinal_mappings": None if ordinal_mappings is None else tuple(ordinal_mappings),
+            "ordinal_mappings": None
+            if ordinal_mappings is None
+            else tuple(ordinal_mappings),
             "count_columns": count_columns,
             "time_value_columns": _time_value_column_names(time_value_columns),
             "nullable_columns": nullable_columns,
@@ -413,7 +415,9 @@ def build_datetime_query_times(
         step = parsed_history[-1] - parsed_history[-2]
         if step <= timedelta(0):
             raise ValueError("history_times must be strictly increasing")
-        values = [parsed_history[-1] + step * offset for offset in range(1, periods + 1)]
+        values = [
+            parsed_history[-1] + step * offset for offset in range(1, periods + 1)
+        ]
         return [
             _serialize_absolute_datetime(value, field=f"query_times[{index}]")
             for index, value in enumerate(values)
@@ -421,10 +425,16 @@ def build_datetime_query_times(
 
     pandas_module = _require_pandas()
     start = pandas_module.Timestamp(parsed_history[-1])
-    offset = pandas_module.to_timedelta(frequency) if isinstance(frequency, str) else frequency
+    offset = (
+        pandas_module.to_timedelta(frequency)
+        if isinstance(frequency, str)
+        else frequency
+    )
     values = [start + offset * step_index for step_index in range(1, periods + 1)]
     return [
-        _serialize_absolute_datetime(value.to_pydatetime(), field=f"query_times[{index}]")
+        _serialize_absolute_datetime(
+            value.to_pydatetime(), field=f"query_times[{index}]"
+        )
         for index, value in enumerate(values)
     ]
 
@@ -612,7 +622,9 @@ def _column_value_to_json(
         return None
     scalar_value = _to_builtin_scalar(value, numpy_module=numpy_module)
     if column_spec.modality in {"categorical", "ordinal"} and column_spec.mapping:
-        return _encode_mapped_value(scalar_value, mapping=column_spec.mapping, field=field)
+        return _encode_mapped_value(
+            scalar_value, mapping=column_spec.mapping, field=field
+        )
     if (
         column_spec.modality == "time_value"
         and column_spec.time_value_kind == "absolute_datetime"
@@ -850,7 +862,9 @@ def _parse_ordered_values(
     if len(values) == 0:
         raise ValueError(f"{field} must not be empty")
     parsed = [
-        _parse_time_value(value, time_index_mode=time_index_mode, field=f"{field}[{index}]")
+        _parse_time_value(
+            value, time_index_mode=time_index_mode, field=f"{field}[{index}]"
+        )
         for index, value in enumerate(values)
     ]
     for value_index in range(1, len(parsed)):

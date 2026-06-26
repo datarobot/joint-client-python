@@ -1,3 +1,5 @@
+"""Tests for the contract models surface of jointfm_client."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -21,6 +23,7 @@ from jointfm_client import (
 
 
 def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> None:
+    """Request models serialize direct payloads without mutating inputs."""
     metadata = ForecastRequestMetadata(
         model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
         return_mode="quantiles",
@@ -102,6 +105,7 @@ def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> N
 
 
 def test_request_models_reject_direct_validation_edges() -> None:
+    """Request models reject direct validation edges."""
     with pytest.raises(ValueError, match="lower_bound"):
         ColumnSpec(
             name="target",
@@ -139,6 +143,7 @@ def test_request_models_reject_direct_validation_edges() -> None:
 
 
 def test_column_spec_serializes_one_sided_bounds() -> None:
+    """Column spec serializes one sided bounds."""
     lower_only = ColumnSpec(
         name="price_floor",
         modality="numeric",
@@ -167,6 +172,7 @@ def test_column_spec_serializes_one_sided_bounds() -> None:
 
 
 def test_response_helper_models_parse_direct_payloads() -> None:
+    """Response helper models parse direct payloads."""
     error = StructuredError.from_payload(
         {
             "code": "VALIDATION_ERROR",
@@ -238,6 +244,7 @@ def test_response_helper_models_parse_direct_payloads() -> None:
 
 
 def test_response_models_reject_direct_validation_edges() -> None:
+    """Response models reject direct validation edges."""
     with pytest.raises(ValueError, match="errors.field"):
         StructuredError.from_payload(
             {"code": "VALIDATION_ERROR", "message": "bad request", "field": 1}
@@ -280,6 +287,7 @@ def test_response_models_reject_direct_validation_edges() -> None:
 
 
 def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
+    """Forecast response rejects request scoped metadata mismatches."""
     request_payload = {
         "schema_version": "v1",
         "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
@@ -330,6 +338,7 @@ def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
 
 
 def test_forecast_response_rejects_sample_bound_violations() -> None:
+    """Forecast response rejects sample bound violations."""
     request_payload = {
         "schema_version": "v1",
         "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
@@ -351,21 +360,28 @@ def test_forecast_response_rejects_sample_bound_violations() -> None:
     }
 
     valid_response = _sample_response_payload()
-    result = ForecastResponse.from_payload(valid_response, request_payload=request_payload)
+    result = ForecastResponse.from_payload(
+        valid_response, request_payload=request_payload
+    )
     assert result.outputs.samples == (((12.0,),),)
 
     below_lower_bound = _sample_response_payload()
     below_lower_bound["outputs"]["samples"] = [[[-1.0]]]
     with pytest.raises(ValueError, match="violates requested lower_bound"):
-        ForecastResponse.from_payload(below_lower_bound, request_payload=request_payload)
+        ForecastResponse.from_payload(
+            below_lower_bound, request_payload=request_payload
+        )
 
     above_upper_bound = _sample_response_payload()
     above_upper_bound["outputs"]["samples"] = [[[21.0]]]
     with pytest.raises(ValueError, match="violates requested upper_bound"):
-        ForecastResponse.from_payload(above_upper_bound, request_payload=request_payload)
+        ForecastResponse.from_payload(
+            above_upper_bound, request_payload=request_payload
+        )
 
 
 def _mean_response_payload() -> dict[str, Any]:
+    """Mean response payload."""
     return {
         "schema_version": "v1",
         "image_version": "0.2.0",
@@ -387,6 +403,7 @@ def _mean_response_payload() -> dict[str, Any]:
 
 
 def _sample_response_payload() -> dict[str, Any]:
+    """Sample response payload."""
     return {
         "schema_version": "v1",
         "image_version": "0.2.0",

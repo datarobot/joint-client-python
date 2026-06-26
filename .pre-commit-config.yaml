@@ -1,14 +1,25 @@
 fail_fast: true
 exclude: ^private/
+default_install_hook_types: [pre-commit, commit-msg]
 
 repos:
   - repo: local
     hooks:
+      - id: commitizen
+        name: conventional commit message
+        entry: uv run cz check --commit-msg-file
+        language: system
+        stages: [commit-msg]
       - id: ruff-check
         name: ruff check
         entry: uv run ruff check .
         language: system
         pass_filenames: false
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
       - id: ty-check
         name: ty check
         entry: task typecheck

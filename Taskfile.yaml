@@ -17,12 +17,16 @@ tasks:
       - uv sync --all-groups --extra notebooks
       - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
       - uv run pre-commit install
-      - task: install-typos
+      - task: install:typos
       - cmd: 'echo "Activate virtual environment with: . .venv/bin/activate"'
 
   lint:
     desc: Run Ruff lint checks
     cmd: uv run ruff check .
+
+  format:
+    desc: Run Ruff formatter (rewrites files in place)
+    cmd: uv run ruff format .
 
   typecheck:
     desc: Run ty static type checks
@@ -42,25 +46,81 @@ tasks:
       - uv build
       - uv run python scripts/validate_distribution.py
 
-  release-check:
-    desc: Run the local release gate
+  check:
+    desc: Run static code quality checks (read-only; no file modifications)
     cmds:
+      - task: typos
       - task: lint
+      - uv run ruff format --check .
       - task: typecheck
-      - task: coverage
-      - task: build
+
+  release:require-tag:
+    desc: Fail fast if Commitizen has no base tag to bump from
+    cmd: |
+      EXPECTED="v$(uv run cz version --project)"
+      if git rev-parse -q --verify "refs/tags/$EXPECTED" >/dev/null; then
+        echo "OK: base tag $EXPECTED found"
+        exit 0
+      fi
+      echo "FAIL: base tag $EXPECTED does not exist."
+      echo "Commitizen needs an annotated tag matching the current pyproject version"
+      echo "to compute the next bump. Seed it once with:"
+      echo
+      echo "  git tag -a $EXPECTED -m 'Seed initial release tag for Commitizen'"
+      echo "  git push --tags"
+      echo
+      echo "Then rerun this task."
+      exit 1
+
+  release:dry:
+    desc: Preview the next SemVer bump (no commit, no tag, no file changes)
+    cmds:
+      - task: release:require-tag
+      - |
+        uv run cz bump --dry-run --yes {{.CLI_ARGS}}
+        echo "OK: dry-run succeeded (no files modified)"
+
+  release:check:
+    desc: Verify the working tree is ready to cut a release
+    cmds:
+      - task: release:require-tag
+      - |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "FAIL: working tree has uncommitted changes; commit or stash first"
+          exit 1
+        fi
+        BRANCH="$(git symbolic-ref --short HEAD)"
+        if [ "$BRANCH" != "main" ]; then
+          echo "FAIL: cz bump must run on main (currently on $BRANCH)"
+          exit 1
+        fi
+        git fetch --quiet origin main
+        if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
+          echo "FAIL: local main is not aligned with origin/main; pull/push first"
+          exit 1
+        fi
+        echo "OK: release pre-flight passed"
+
+  release:
+    desc: Cut a SemVer release with Commitizen (writes CHANGELOG, bumps versions, tags)
+    cmds:
+      - task: release:check
+      - uv run cz bump --yes {{.CLI_ARGS}}
+      - |
+        TAG="$(git describe --tags --abbrev=0)"
+        echo "OK: created tag $TAG. Publish with: git push && git push --tags"
 
   typos:
     desc: Run the spelling checker
     cmds:
-      - task: install-typos
+      - task: install:typos
       - typos --config typos.toml --force-exclude --sort .
 
   pre-commit:
     desc: Run pre-commit hooks on all files
     cmd: uv run pre-commit run --all-files
 
-  install-typos:
+  install:typos:
     desc: Install typos using Homebrew when available, otherwise download a release binary with curl
     cmds:
       - |

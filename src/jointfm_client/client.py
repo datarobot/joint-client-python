@@ -147,8 +147,12 @@ class JointFMClient:
         else:
             health_url = self._require_health_url()
             payload = self._transport_for_request().get_json(health_url)
-        expected_model_version = None if self.settings is None else self.settings.model_version
-        validate_service_metadata(payload, expected_model_version=expected_model_version)
+        expected_model_version = (
+            None if self.settings is None else self.settings.model_version
+        )
+        validate_service_metadata(
+            payload, expected_model_version=expected_model_version
+        )
         metadata = HealthMetadata.from_payload(payload)
         if cache:
             self._health_metadata = metadata
@@ -214,7 +218,8 @@ class JointFMClient:
         count_columns: Sequence[str] | None = None,
         time_value_columns: Sequence[str] | Mapping[str, TimeValueKind] | None = None,
         nullable_columns: Sequence[str] | None = None,
-        bounds: Mapping[str, tuple[float | int | None, float | int | None]] | None = None,
+        bounds: Mapping[str, tuple[float | int | None, float | int | None]]
+        | None = None,
     ) -> ForecastResponse:
         """Build and submit a forecast request from tabular history inputs."""
         predict_url = self._require_predict_url("forecast")
@@ -280,7 +285,9 @@ class JointFMClient:
             return self._forecast_sample_batches(predict_url, payload, sample_cap)
 
         try:
-            response_payload = self._transport_for_request().post_json(predict_url, payload)
+            response_payload = self._transport_for_request().post_json(
+                predict_url, payload
+            )
         except JointFMHTTPStatusError as error:
             sample_cap = _sample_batch_cap_from_error(error, payload)
             if sample_cap is None:
@@ -307,16 +314,16 @@ class JointFMClient:
         return cast(
             MeanForecastResult,
             self.forecast(
-            history,
-            query_times=query_times,
-            schema=schema,
-            time_index_mode=time_index_mode,
-            columns=columns,
-            time_column=time_column,
-            requested_columns=requested_columns,
-            return_mode="mean",
-            model_version=model_version,
-            seed=seed,
+                history,
+                query_times=query_times,
+                schema=schema,
+                time_index_mode=time_index_mode,
+                columns=columns,
+                time_column=time_column,
+                requested_columns=requested_columns,
+                return_mode="mean",
+                model_version=model_version,
+                seed=seed,
             ),
         )
 
@@ -338,17 +345,17 @@ class JointFMClient:
         return cast(
             SampleForecastResult,
             self.forecast(
-            history,
-            query_times=query_times,
-            schema=schema,
-            time_index_mode=time_index_mode,
-            columns=columns,
-            time_column=time_column,
-            requested_columns=requested_columns,
-            return_mode="samples",
-            model_version=model_version,
-            n_samples=n_samples,
-            seed=seed,
+                history,
+                query_times=query_times,
+                schema=schema,
+                time_index_mode=time_index_mode,
+                columns=columns,
+                time_column=time_column,
+                requested_columns=requested_columns,
+                return_mode="samples",
+                model_version=model_version,
+                n_samples=n_samples,
+                seed=seed,
             ),
         )
 
@@ -371,18 +378,18 @@ class JointFMClient:
         return cast(
             QuantileForecastResult,
             self.forecast(
-            history,
-            query_times=query_times,
-            schema=schema,
-            time_index_mode=time_index_mode,
-            columns=columns,
-            time_column=time_column,
-            requested_columns=requested_columns,
-            return_mode="quantiles",
-            model_version=model_version,
-            n_samples=n_samples,
-            quantiles=quantiles,
-            seed=seed,
+                history,
+                query_times=query_times,
+                schema=schema,
+                time_index_mode=time_index_mode,
+                columns=columns,
+                time_column=time_column,
+                requested_columns=requested_columns,
+                return_mode="quantiles",
+                model_version=model_version,
+                n_samples=n_samples,
+                quantiles=quantiles,
+                seed=seed,
             ),
         )
 
@@ -413,7 +420,9 @@ class JointFMClient:
     ) -> dict[str, Any]:
         if schema is None:
             if columns is None:
-                raise ValueError("columns or schema is required for row-sequence forecasts")
+                raise ValueError(
+                    "columns or schema is required for row-sequence forecasts"
+                )
             schema = DataFrameSchema(
                 columns=columns,
                 time_index_mode=time_index_mode,
@@ -530,7 +539,9 @@ class JointFMClient:
             assert self._health_metadata is not None
             return self._health_metadata.model_version
 
-        normalized_model_version = validate_jointfm_model_version(configured_model_version)
+        normalized_model_version = validate_jointfm_model_version(
+            configured_model_version
+        )
         if (
             self._health_metadata is not None
             and normalized_model_version != self._health_metadata.model_version
@@ -635,7 +646,9 @@ def _resolve_datarobot_request_id_headers(
 
 
 def _is_history_row_sequence(value: Any) -> bool:
-    return isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray)
+    return isinstance(value, Sequence) and not isinstance(
+        value, str | bytes | bytearray
+    )
 
 
 def _forecast_response_from_payload(
@@ -751,7 +764,9 @@ def _merge_sample_forecast_results(
         )
 
     seed = request_payload.get("seed")
-    diagnostics_seed = seed if isinstance(seed, int) and not isinstance(seed, bool) else None
+    diagnostics_seed = (
+        seed if isinstance(seed, int) and not isinstance(seed, bool) else None
+    )
     return SampleForecastResult(
         schema_version=first_result.schema_version,
         image_version=first_result.image_version,
@@ -795,7 +810,13 @@ def _validate_sample_batch_results(
             raise ValueError("sample batch query_times mismatch")
         if batch_result.requested_columns != first_result.requested_columns:
             raise ValueError("sample batch requested_columns mismatch")
-        if batch_result.diagnostics.history_rows != first_result.diagnostics.history_rows:
+        if (
+            batch_result.diagnostics.history_rows
+            != first_result.diagnostics.history_rows
+        ):
             raise ValueError("sample batch history_rows mismatch")
-        if batch_result.diagnostics.horizon_count != first_result.diagnostics.horizon_count:
+        if (
+            batch_result.diagnostics.horizon_count
+            != first_result.diagnostics.horizon_count
+        ):
             raise ValueError("sample batch horizon_count mismatch")

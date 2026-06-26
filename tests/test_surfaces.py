@@ -1,3 +1,5 @@
+"""Tests for the surfaces surface of jointfm_client."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -5,7 +7,7 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -19,6 +21,8 @@ from jointfm_client import (
 
 
 class _SurfaceHandlerBase(BaseHTTPRequestHandler):
+    """Surface Handler Base (test helper)."""
+
     requests: list[dict[str, Any]]
     route_map: Mapping[
         tuple[str, str],
@@ -30,6 +34,7 @@ class _SurfaceHandlerBase(BaseHTTPRequestHandler):
 def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Hosted surface uses datarobot routes and auth headers."""
     request_payload = json_fixture_loader("forecast_mean_request")
     health_payload = json_fixture_loader("health_metadata")
     response_payload = json_fixture_loader("forecast_mean_response")
@@ -62,7 +67,10 @@ def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
 
         assert health.model_version == settings.model_version
         assert response == response_payload
-        assert [entry["path"] for entry in handler.requests] == [predict_path, predict_path]
+        assert [entry["path"] for entry in handler.requests] == [
+            predict_path,
+            predict_path,
+        ]
         assert [entry["method"] for entry in handler.requests] == ["POST", "POST"]
         assert handler.requests[0]["body"] == {"request_type": "health"}
         assert handler.requests[0]["headers"]["Authorization"] == "Bearer secret-token"
@@ -80,6 +88,7 @@ def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
 def test_local_surface_uses_direct_service_routes_without_hosted_auth(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Local surface uses direct service routes without hosted auth."""
     request_payload = json_fixture_loader("forecast_mean_request")
     health_payload = json_fixture_loader("health_metadata")
     response_payload = json_fixture_loader("forecast_mean_response")
@@ -123,6 +132,7 @@ def test_local_surface_uses_direct_service_routes_without_hosted_auth(
 def test_local_surface_rejects_samples_below_requested_lower_bound(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Local surface rejects samples below requested lower bound."""
     response_payload = json_fixture_loader("forecast_samples_response")
     response_payload["outputs"]["samples"] = [[[-0.5]], [[12.5]]]
     server, handler = _start_surface_server(
@@ -163,6 +173,7 @@ def test_local_surface_rejects_samples_below_requested_lower_bound(
 def test_hosted_surface_auto_discovers_model_version_when_settings_unpinned(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Hosted surface auto discovers model version when settings unpinned."""
     request_payload = json_fixture_loader("forecast_mean_request")
     health_payload = json_fixture_loader("health_metadata")
     response_payload = json_fixture_loader("forecast_mean_response")
@@ -207,7 +218,10 @@ def test_hosted_surface_auto_discovers_model_version_when_settings_unpinned(
             "health",
             None,
         ]
-        assert handler.requests[1]["body"]["model_version"] == health_payload["model_version"]
+        assert (
+            handler.requests[1]["body"]["model_version"]
+            == health_payload["model_version"]
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -220,20 +234,33 @@ def _start_surface_server(
         | Mapping[str | None, tuple[HTTPStatus, Mapping[str, Any]]],
     ],
 ) -> tuple[ThreadingHTTPServer, type[_SurfaceHandlerBase]]:
+    """Start surface server."""
+
     class SurfaceHandler(_SurfaceHandlerBase):
+        """Surface Handler (test helper)."""
+
         requests: list[dict[str, Any]] = []
         route_map = routes
 
         def do_GET(self) -> None:
+            """Do G E T."""
             self._handle_request("GET")
 
         def do_POST(self) -> None:
+            """Do P O S T."""
             self._handle_request("POST")
 
         def _handle_request(self, method: str) -> None:
+            """Handle request."""
             content_length = int(self.headers.get("Content-Length", "0"))
-            request_body = self.rfile.read(content_length) if content_length > 0 else b""
-            decoded_body = None if request_body == b"" else json.loads(request_body.decode("utf-8"))
+            request_body = (
+                self.rfile.read(content_length) if content_length > 0 else b""
+            )
+            decoded_body = (
+                None
+                if request_body == b""
+                else json.loads(request_body.decode("utf-8"))
+            )
             type(self).requests.append(
                 {
                     "method": method,
@@ -249,7 +276,11 @@ def _start_surface_server(
                     if isinstance(decoded_body, Mapping)
                     else None
                 )
-                status, payload = route_value[discriminator]
+                discriminated = cast(
+                    "Mapping[str | None, tuple[HTTPStatus, Mapping[str, Any]]]",
+                    route_value,
+                )
+                status, payload = discriminated[discriminator]
             else:
                 status, payload = route_value
             response_body = json.dumps(payload).encode("utf-8")
@@ -264,6 +295,7 @@ def _start_surface_server(
             self.wfile.write(response_body)
 
         def log_message(self, format: str, *args: object) -> None:
+            """Log message."""
             del format, args
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), SurfaceHandler)
@@ -273,6 +305,7 @@ def _start_surface_server(
 
 
 def _server_base_url(server: ThreadingHTTPServer) -> str:
+    """Server base url."""
     host = server.server_address[0]
     port = server.server_address[1]
     return f"http://{host}:{port}"

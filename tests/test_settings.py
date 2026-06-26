@@ -1,3 +1,5 @@
+"""Tests for the settings surface of jointfm_client."""
+
 import json
 
 import pytest
@@ -32,6 +34,7 @@ from jointfm_client import (
 
 
 def _hosted_env(**overrides: str) -> dict[str, str]:
+    """Hosted env."""
     env = {
         DATAROBOT_ENDPOINT_ENV: "https://app.datarobot.com/api/v2/",
         DATAROBOT_API_TOKEN_ENV: "secret-token",
@@ -44,6 +47,7 @@ def _hosted_env(**overrides: str) -> dict[str, str]:
 
 
 def test_load_settings_from_environment_with_deployment_id_builds_hosted_url() -> None:
+    """Load settings from environment with deployment id builds hosted url."""
     settings = load_settings(env=_hosted_env(), dotenv_path=None)
 
     assert settings.datarobot_endpoint == "https://app.datarobot.com/api/v2"
@@ -59,6 +63,7 @@ def test_load_settings_from_environment_with_deployment_id_builds_hosted_url() -
 
 
 def test_load_settings_with_local_service_base_url_builds_direct_urls() -> None:
+    """Load settings with local service base url builds direct urls."""
     settings = load_settings(
         env={
             JOINTFM_LOCAL_BASE_URL_ENV: "http://127.0.0.1:8080/",
@@ -79,6 +84,7 @@ def test_load_settings_with_local_service_base_url_builds_direct_urls() -> None:
 
 
 def test_load_settings_with_deployment_url_selector_builds_prediction_url() -> None:
+    """Load settings with deployment url selector builds prediction url."""
     env = _hosted_env(
         **{
             JOINTFM_DEPLOYMENT_URL_ENV: (
@@ -103,6 +109,7 @@ def test_load_settings_with_deployment_url_selector_builds_prediction_url() -> N
 
 
 def test_load_settings_with_predict_url_selector_finds_deployment_url() -> None:
+    """Load settings with predict url selector finds deployment url."""
     env = _hosted_env(
         **{
             JOINTFM_PREDICT_URL_ENV: (
@@ -128,6 +135,7 @@ def test_load_settings_with_predict_url_selector_finds_deployment_url() -> None:
 
 
 def test_load_settings_reads_dotenv_without_overriding_environment(tmp_path) -> None:
+    """Load settings reads dotenv without overriding environment."""
     dotenv_path = tmp_path / ".env"
     dotenv_path.write_text(
         "\n".join(
@@ -152,6 +160,7 @@ def test_load_settings_reads_dotenv_without_overriding_environment(tmp_path) -> 
 
 
 def test_load_settings_requires_explicit_schema_version() -> None:
+    """Load settings requires explicit schema version."""
     env_without_schema_version = _hosted_env()
     del env_without_schema_version[JOINTFM_SCHEMA_VERSION_ENV]
 
@@ -160,6 +169,7 @@ def test_load_settings_requires_explicit_schema_version() -> None:
 
 
 def test_load_settings_makes_model_version_optional() -> None:
+    """Load settings makes model version optional."""
     env_without_model_version = _hosted_env()
     del env_without_model_version[JOINTFM_MODEL_VERSION_ENV]
 
@@ -169,6 +179,7 @@ def test_load_settings_makes_model_version_optional() -> None:
 
 
 def test_load_settings_rejects_unsupported_schema_version() -> None:
+    """Load settings rejects unsupported schema version."""
     with pytest.raises(JointFMConfigurationError, match=JOINTFM_SCHEMA_VERSION_ENV):
         load_settings(
             env=_hosted_env(**{JOINTFM_SCHEMA_VERSION_ENV: "v2"}),
@@ -177,6 +188,7 @@ def test_load_settings_rejects_unsupported_schema_version() -> None:
 
 
 def test_load_settings_rejects_missing_credentials_without_defaults() -> None:
+    """Load settings rejects missing credentials without defaults."""
     with pytest.raises(JointFMConfigurationError, match=DATAROBOT_ENDPOINT_ENV):
         load_settings(
             env={
@@ -209,6 +221,7 @@ def test_load_settings_rejects_missing_credentials_without_defaults() -> None:
     ],
 )
 def test_load_settings_rejects_malformed_credentials(endpoint: str, token: str) -> None:
+    """Load settings rejects malformed credentials."""
     with pytest.raises(JointFMConfigurationError):
         load_settings(
             env=_hosted_env(
@@ -222,6 +235,7 @@ def test_load_settings_rejects_malformed_credentials(endpoint: str, token: str) 
 
 
 def test_load_settings_requires_exactly_one_deployment_selector() -> None:
+    """Load settings requires exactly one deployment selector."""
     env_without_selector = _hosted_env()
     del env_without_selector[JOINTFM_DEPLOYMENT_ID_ENV]
 
@@ -248,7 +262,10 @@ def test_load_settings_requires_exactly_one_deployment_selector() -> None:
         )
 
 
-def test_load_settings_resolves_named_pulumi_target_from_saved_outputs(tmp_path) -> None:
+def test_load_settings_resolves_named_pulumi_target_from_saved_outputs(
+    tmp_path,
+) -> None:
+    """Load settings resolves named pulumi target from saved outputs."""
     outputs_path = tmp_path / "jointfm-pulumi-outputs.json"
     outputs_path.write_text(
         json.dumps({"fin-studentt": {"deployment_id": "pulumi-deployment-id"}}),
@@ -300,6 +317,7 @@ def test_load_settings_resolves_named_pulumi_target_url_outputs(
     target_outputs: dict[str, str],
     expected_deployment_id: str,
 ) -> None:
+    """Load settings resolves named pulumi target url outputs."""
     outputs_path = tmp_path / "jointfm-pulumi-outputs.json"
     outputs_path.write_text(
         json.dumps({"fin-studentt": target_outputs}),
@@ -325,6 +343,7 @@ def test_load_settings_resolves_named_pulumi_target_url_outputs(
 
 
 def test_load_settings_rejects_pulumi_target_without_url_outputs(tmp_path) -> None:
+    """Load settings rejects pulumi target without url outputs."""
     outputs_path = tmp_path / "jointfm-pulumi-outputs.json"
     outputs_path.write_text(json.dumps({"fin-studentt": {}}), encoding="utf-8")
     env = _hosted_env(
@@ -340,6 +359,7 @@ def test_load_settings_rejects_pulumi_target_without_url_outputs(tmp_path) -> No
 
 
 def test_load_settings_rejects_invalid_pulumi_outputs(tmp_path) -> None:
+    """Load settings rejects invalid pulumi outputs."""
     missing_outputs_path = tmp_path / "missing.json"
     invalid_json_path = tmp_path / "invalid.json"
     invalid_json_path.write_text("{", encoding="utf-8")
@@ -348,7 +368,9 @@ def test_load_settings_rejects_invalid_pulumi_outputs(tmp_path) -> None:
     missing_target_path = tmp_path / "missing-target.json"
     missing_target_path.write_text(json.dumps({"other": {}}), encoding="utf-8")
     non_object_target_path = tmp_path / "non-object-target.json"
-    non_object_target_path.write_text(json.dumps({"fin-studentt": []}), encoding="utf-8")
+    non_object_target_path.write_text(
+        json.dumps({"fin-studentt": []}), encoding="utf-8"
+    )
     invalid_output_path = tmp_path / "invalid-output.json"
     invalid_output_path.write_text(
         json.dumps({"fin-studentt": {"deployment_id": ""}}),
@@ -378,6 +400,7 @@ def test_load_settings_rejects_invalid_pulumi_outputs(tmp_path) -> None:
 
 
 def test_hosted_and_local_url_builders_are_separate() -> None:
+    """Hosted and local url builders are separate."""
     assert build_hosted_predict_url(
         "https://app.datarobot.com/api/v2/",
         "deployment-id",
@@ -394,6 +417,7 @@ def test_hosted_and_local_url_builders_are_separate() -> None:
 
 
 def test_hosted_url_helpers_normalize_supported_forms() -> None:
+    """Hosted url helpers normalize supported forms."""
     deployment_url = "https://app.datarobot.com/api/v2/deployments/deployment-id"
     predict_url = f"{deployment_url}/predictionsUnstructured"
 
@@ -405,6 +429,7 @@ def test_hosted_url_helpers_normalize_supported_forms() -> None:
 
 
 def test_url_validators_reject_ambiguous_or_malformed_values() -> None:
+    """Url validators reject ambiguous or malformed values."""
     with pytest.raises(JointFMConfigurationError, match="hostname"):
         normalize_datarobot_endpoint("https:///api/v2")
 
@@ -448,6 +473,7 @@ def test_url_validators_reject_ambiguous_or_malformed_values() -> None:
 
 
 def test_datarobot_prediction_headers_use_notebook_authorization_scheme() -> None:
+    """Datarobot prediction headers use notebook authorization scheme."""
     assert build_datarobot_prediction_headers("secret-token") == {
         "Authorization": "Bearer secret-token",
         "Accept": "*/*",
@@ -456,6 +482,7 @@ def test_datarobot_prediction_headers_use_notebook_authorization_scheme() -> Non
 
 
 def test_jointfm_client_from_env_attaches_non_secret_settings() -> None:
+    """Jointfm client from env attaches non secret settings."""
     client = JointFMClient.from_env(env=_hosted_env(), dotenv_path=None)
 
     assert client.settings is not None

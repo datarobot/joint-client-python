@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import math
-from typing import Any, Final, Literal, Self, TypeAlias
+from typing import Any, Final, Literal, Self, TypeAlias, TypeVar, cast
 
 from jointfm_client.exceptions import (
     JointFMServiceError,
@@ -144,7 +144,11 @@ class ColumnSpec:
         _optional_mapping(self.mapping, field="columns.mapping")
         lower_bound = _optional_float(self.lower_bound, field="columns.lower_bound")
         upper_bound = _optional_float(self.upper_bound, field="columns.upper_bound")
-        if lower_bound is not None and upper_bound is not None and lower_bound > upper_bound:
+        if (
+            lower_bound is not None
+            and upper_bound is not None
+            and lower_bound > upper_bound
+        ):
             raise ValueError("columns.lower_bound must not exceed columns.upper_bound")
 
         _optional_member(
@@ -335,7 +339,9 @@ class ForecastRequest:
         for index, history_row in enumerate(history_rows):
             _require_mapping(history_row, field=f"history_rows[{index}]")
         _validate_history_declared_columns(history_rows, self.schema)
-        _serialize_query_times(self.query_times, time_index_mode=self.schema.time_index_mode)
+        _serialize_query_times(
+            self.query_times, time_index_mode=self.schema.time_index_mode
+        )
         _resolve_requested_columns(self.schema.columns, self.requested_columns)
         _optional_positive_int(self.n_samples, field="n_samples")
         _optional_int(self.seed, field="seed")
@@ -343,7 +349,9 @@ class ForecastRequest:
         if self.metadata.return_mode == "quantiles":
             _require_quantiles(self.quantiles)
         elif self.quantiles is not None:
-            raise ValueError("quantiles may be provided only when return_mode='quantiles'")
+            raise ValueError(
+                "quantiles may be provided only when return_mode='quantiles'"
+            )
 
     def to_payload(self) -> dict[str, Any]:
         """Return a JSON-compatible forecast request without mutating inputs."""
@@ -709,7 +717,9 @@ class ForecastResponse:
         _raise_for_response_errors(payload)
 
         expectations = _forecast_response_expectations(request_payload)
-        schema_version = _require_string(payload.get("schema_version"), field="schema_version")
+        schema_version = _require_string(
+            payload.get("schema_version"), field="schema_version"
+        )
         if schema_version != SCHEMA_VERSION:
             raise UnsupportedSchemaVersionError(
                 "Unsupported JointFM schema_version: "
@@ -724,7 +734,9 @@ class ForecastResponse:
                 f"expected {expectations.schema_version!r}, got {schema_version!r}"
             )
 
-        model_version = _require_string(payload.get("model_version"), field="model_version")
+        model_version = _require_string(
+            payload.get("model_version"), field="model_version"
+        )
         if (
             expectations.model_version is not None
             and model_version != expectations.model_version
@@ -739,7 +751,10 @@ class ForecastResponse:
             field="query_mode",
             supported_values=SUPPORTED_QUERY_MODES,
         )
-        if expectations.query_mode is not None and query_mode != expectations.query_mode:
+        if (
+            expectations.query_mode is not None
+            and query_mode != expectations.query_mode
+        ):
             raise ValueError(
                 "forecast response query_mode mismatch: "
                 f"expected {expectations.query_mode!r}, got {query_mode!r}"
@@ -802,7 +817,9 @@ class ForecastResponse:
 
         shared_fields = {
             "schema_version": schema_version,
-            "image_version": _require_string(payload.get("image_version"), field="image_version"),
+            "image_version": _require_string(
+                payload.get("image_version"), field="image_version"
+            ),
             "model_version": model_version,
             "checkpoint_version": _require_string(
                 payload.get("checkpoint_version"),
@@ -856,7 +873,9 @@ class MeanForecastResult(ForecastResponse):
                 "requested_column": column_name,
                 "value": value,
             }
-            for query_time, values_by_column in zip(self.query_times, self.mean, strict=True)
+            for query_time, values_by_column in zip(
+                self.query_times, self.mean, strict=True
+            )
             for column_name, value in zip(
                 self.requested_columns,
                 values_by_column,
@@ -878,7 +897,9 @@ class MeanForecastResult(ForecastResponse):
                     strict=True,
                 )
             }
-            for query_time, values_by_column in zip(self.query_times, self.mean, strict=True)
+            for query_time, values_by_column in zip(
+                self.query_times, self.mean, strict=True
+            )
         ]
         return pandas_module.DataFrame.from_records(rows)
 
@@ -914,7 +935,9 @@ class SampleForecastResult(ForecastResponse):
                 "value": value,
             }
             for sample_index, sample_values in enumerate(self.samples)
-            for query_time, values_by_column in zip(self.query_times, sample_values, strict=True)
+            for query_time, values_by_column in zip(
+                self.query_times, sample_values, strict=True
+            )
             for column_name, value in zip(
                 self.requested_columns,
                 values_by_column,
@@ -937,7 +960,9 @@ class SampleForecastResult(ForecastResponse):
                 )
             }
             for sample_index, sample_values in enumerate(self.samples)
-            for query_time, values_by_column in zip(self.query_times, sample_values, strict=True)
+            for query_time, values_by_column in zip(
+                self.query_times, sample_values, strict=True
+            )
         ]
         return pandas_module.DataFrame.from_records(rows)
 
@@ -1148,7 +1173,9 @@ def _validate_time_value_options(column_spec: ColumnSpec) -> None:
             column_spec.time_value_timezone is not None,
         ]
     ):
-        raise ValueError("time_value absolute datetime options require time_value_kind='absolute_datetime'")
+        raise ValueError(
+            "time_value absolute datetime options require time_value_kind='absolute_datetime'"
+        )
 
 
 def _validate_history_declared_columns(
@@ -1161,12 +1188,16 @@ def _validate_history_declared_columns(
     expected_columns = {column.name for column in schema.columns}
     missing_columns = sorted(expected_columns.difference(present_columns))
     if missing_columns:
-        raise ValueError(f"history_rows are missing declared columns: {missing_columns}")
+        raise ValueError(
+            f"history_rows are missing declared columns: {missing_columns}"
+        )
     if schema.time_column is not None and schema.time_column not in present_columns:
         raise ValueError(f"history_rows are missing time_column {schema.time_column!r}")
 
 
-def _serialize_history_rows(history_rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _serialize_history_rows(
+    history_rows: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
     return [
         {
             key: _to_json_compatible(value, field=f"history_rows[{index}].{key}")
@@ -1191,14 +1222,18 @@ def _serialize_query_times(
         serialized: list[int] = []
         for index, value in enumerate(values):
             if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f"query_times[{index}] must be an integer for ordinal mode")
+                raise ValueError(
+                    f"query_times[{index}] must be an integer for ordinal mode"
+                )
             serialized.append(value)
         return serialized
 
     serialized_float_times: list[int | float] = []
     for index, value in enumerate(values):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"query_times[{index}] must be numeric for continuous_float mode")
+            raise ValueError(
+                f"query_times[{index}] must be numeric for continuous_float mode"
+            )
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(f"query_times[{index}] must be finite")
         serialized_float_times.append(value)
@@ -1209,13 +1244,17 @@ def _serialize_absolute_datetime(value: Any, *, field: str) -> str:
     if isinstance(value, datetime):
         timestamp = value
     elif isinstance(value, str):
-        normalized_value = value.removesuffix("Z") + "+00:00" if value.endswith("Z") else value
+        normalized_value = (
+            value.removesuffix("Z") + "+00:00" if value.endswith("Z") else value
+        )
         try:
             timestamp = datetime.fromisoformat(normalized_value)
         except ValueError as error:
             raise ValueError(f"{field} must be an ISO 8601 datetime") from error
     else:
-        raise ValueError(f"{field} must be a timezone-aware datetime or ISO 8601 string")
+        raise ValueError(
+            f"{field} must be a timezone-aware datetime or ISO 8601 string"
+        )
     if timestamp.tzinfo is None or timestamp.utcoffset() is None:
         raise ValueError(f"{field} must include timezone information")
     return timestamp.astimezone(timezone.utc).isoformat()
@@ -1233,13 +1272,19 @@ def _resolve_requested_columns(
     for index, requested_column in enumerate(requested_values):
         if isinstance(requested_column, str):
             if requested_column not in column_names:
-                raise ValueError(f"requested_columns[{index}] references unknown column {requested_column!r}")
+                raise ValueError(
+                    f"requested_columns[{index}] references unknown column {requested_column!r}"
+                )
             resolved_names.append(requested_column)
             continue
         if isinstance(requested_column, bool) or not isinstance(requested_column, int):
-            raise ValueError(f"requested_columns[{index}] must be a string name or integer column index")
+            raise ValueError(
+                f"requested_columns[{index}] must be a string name or integer column index"
+            )
         if requested_column < 0 or requested_column >= len(column_names):
-            raise ValueError(f"requested_columns[{index}] index {requested_column} is out of bounds")
+            raise ValueError(
+                f"requested_columns[{index}] index {requested_column} is out of bounds"
+            )
         resolved_names.append(column_names[requested_column])
     if len(set(resolved_names)) != len(resolved_names):
         raise ValueError("requested_columns must not contain duplicates")
@@ -1266,7 +1311,9 @@ def _structured_error_tuple(value: Any) -> tuple[StructuredError, ...]:
     parsed_errors: list[StructuredError] = []
     for index, error in enumerate(errors):
         parsed_errors.append(
-            StructuredError.from_payload(_require_mapping(error, field=f"errors[{index}]"))
+            StructuredError.from_payload(
+                _require_mapping(error, field=f"errors[{index}]")
+            )
         )
     return tuple(parsed_errors)
 
@@ -1319,7 +1366,9 @@ def _forecast_response_expectations(
             field="request_payload.requested_columns",
         )
         requested_column_count = len(requested_column_values)
-        if all(isinstance(value, str) and value != "" for value in requested_column_values):
+        if all(
+            isinstance(value, str) and value != "" for value in requested_column_values
+        ):
             requested_columns = tuple(requested_column_values)
 
     query_mode_value = request_payload.get("query_mode")
@@ -1421,8 +1470,14 @@ def _sample_bounds_by_column_name(
         )
         if lower_bound is None and upper_bound is None:
             continue
-        if lower_bound is not None and upper_bound is not None and lower_bound > upper_bound:
-            raise ValueError(f"{field}.lower_bound must be less than or equal to upper_bound")
+        if (
+            lower_bound is not None
+            and upper_bound is not None
+            and lower_bound > upper_bound
+        ):
+            raise ValueError(
+                f"{field}.lower_bound must be less than or equal to upper_bound"
+            )
         bounds_by_column[column_name] = (lower_bound, upper_bound)
     return bounds_by_column
 
@@ -1737,19 +1792,26 @@ def _optional_mapping(value: Any, *, field: str) -> Mapping[str | int, int] | No
     return parsed
 
 
-def _require_member(value: Any, *, field: str, supported_values: Sequence[str]) -> str:
-    value = _require_string(value, field=field)
-    if value not in supported_values:
-        raise ValueError(f"Unsupported {field}: expected one of {tuple(supported_values)!r}, got {value!r}")
-    return value
+_MemberT = TypeVar("_MemberT", bound=str)
+
+
+def _require_member(
+    value: Any, *, field: str, supported_values: Sequence[_MemberT]
+) -> _MemberT:
+    parsed = _require_string(value, field=field)
+    if parsed not in supported_values:
+        raise ValueError(
+            f"Unsupported {field}: expected one of {tuple(supported_values)!r}, got {parsed!r}"
+        )
+    return cast(_MemberT, parsed)
 
 
 def _optional_member(
     value: Any,
     *,
     field: str,
-    supported_values: Sequence[str],
-) -> str | None:
+    supported_values: Sequence[_MemberT],
+) -> _MemberT | None:
     if value is None:
         return None
     return _require_member(value, field=field, supported_values=supported_values)

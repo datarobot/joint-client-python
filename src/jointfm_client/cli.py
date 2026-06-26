@@ -24,15 +24,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the ``jointfm-client`` command line interface."""
     parser = _build_parser()
     args = parser.parse_args(argv)
-    handler = cast(_CommandHandler, args.handler)
     try:
-        return handler(args, sys.stdout)
+        return args.handler(args, sys.stdout)
     except (JointFMError, OSError, ValueError, json.JSONDecodeError) as error:
         print(f"jointfm-client: {_format_cli_error(error)}", file=sys.stderr)
         return 2
-
-
-_CommandHandler = Any
 
 
 def _format_cli_error(error: BaseException) -> str:
@@ -201,7 +197,9 @@ def _read_json_object(path: Path) -> Mapping[str, Any]:
 
 def _write_json_file(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _write_json_payload(stdout: TextIO, payload: Mapping[str, Any]) -> None:

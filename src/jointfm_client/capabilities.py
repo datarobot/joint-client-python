@@ -119,8 +119,7 @@ def plan_forecast_columns(
         ColumnSpec(name=name, modality="numeric", role="feature")
         for name in feature_list
     ) + tuple(
-        ColumnSpec(name=name, modality="numeric", role="target")
-        for name in target_list
+        ColumnSpec(name=name, modality="numeric", role="target") for name in target_list
     )
 
     final_names = {column.name for column in columns}

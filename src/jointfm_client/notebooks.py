@@ -20,7 +20,9 @@ def _is_src_layout_project_root(candidate: Path) -> bool:
 
 def resolve_notebook_project_root(start_dir: str | Path | None = None) -> Path:
     """Return the src-layout project root for a notebook started inside a repo tree."""
-    current_dir = Path.cwd().resolve() if start_dir is None else Path(start_dir).resolve()
+    current_dir = (
+        Path.cwd().resolve() if start_dir is None else Path(start_dir).resolve()
+    )
 
     for candidate in (current_dir, *current_dir.parents):
         if _is_src_layout_project_root(candidate):
@@ -53,4 +55,8 @@ def bootstrap_notebook(*, add_src_root: bool = False) -> Path:
     return project_root
 
 
-__all__ = ["WORKSPACE_ROOT_MARKERS", "bootstrap_notebook", "resolve_notebook_project_root"]
+__all__ = [
+    "WORKSPACE_ROOT_MARKERS",
+    "bootstrap_notebook",
+    "resolve_notebook_project_root",
+]

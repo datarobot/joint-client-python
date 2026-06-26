@@ -1,3 +1,5 @@
+"""Tests for the fixture compatibility surface of jointfm_client."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -19,6 +21,7 @@ from jointfm_client import (
 def test_health_fixture_matches_current_v1_service_contract(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Health fixture matches current v1 service contract."""
     payload = json_fixture_loader("health_metadata")
     expected_model_version = payload["model_version"]
     assert isinstance(expected_model_version, str)
@@ -30,7 +33,12 @@ def test_health_fixture_matches_current_v1_service_contract(
     metadata = HealthMetadata.from_payload(payload)
 
     assert metadata.schema_version == "v1"
-    assert metadata.supported_return_modes == ("mean", "samples", "quantiles", "log_prob")
+    assert metadata.supported_return_modes == (
+        "mean",
+        "samples",
+        "quantiles",
+        "log_prob",
+    )
 
 
 @pytest.mark.parametrize(
@@ -63,6 +71,7 @@ def test_checked_in_fixture_payloads_parse_as_forecast_results(
     result_type: type[ForecastResponse],
     return_mode: str,
 ) -> None:
+    """Checked in fixture payloads parse as forecast results."""
     request_payload = json_fixture_loader(request_fixture)
     response_payload = json_fixture_loader(response_fixture)
 
@@ -106,6 +115,7 @@ def test_checked_in_error_fixtures_raise_typed_service_errors(
     error_code: str,
     message_fragment: str,
 ) -> None:
+    """Checked in error fixtures raise typed service errors."""
     with pytest.raises(JointFMServiceError, match=message_fragment) as exc_info:
         ForecastResponse.raise_for_errors(json_fixture_loader(fixture_name))
 

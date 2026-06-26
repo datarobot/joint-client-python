@@ -78,25 +78,39 @@ class JointFMRetryConfig:
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     backoff_seconds: float = DEFAULT_BACKOFF_SECONDS
     max_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
-    status_codes: Sequence[int] = field(default_factory=lambda: DEFAULT_RETRY_STATUS_CODES)
-    allowed_methods: Sequence[str] = field(default_factory=lambda: DEFAULT_RETRYABLE_METHODS)
+    status_codes: Sequence[int] = field(
+        default_factory=lambda: DEFAULT_RETRY_STATUS_CODES
+    )
+    allowed_methods: Sequence[str] = field(
+        default_factory=lambda: DEFAULT_RETRYABLE_METHODS
+    )
 
     def __post_init__(self) -> None:
         """Validate retry limits and retryable response codes."""
         if self.max_attempts < 1:
             raise JointFMConfigurationError("max_attempts must be at least 1")
         if not math.isfinite(self.backoff_seconds) or self.backoff_seconds < 0:
-            raise JointFMConfigurationError("backoff_seconds must be finite and non-negative")
+            raise JointFMConfigurationError(
+                "backoff_seconds must be finite and non-negative"
+            )
         if not math.isfinite(self.max_backoff_seconds) or self.max_backoff_seconds <= 0:
-            raise JointFMConfigurationError("max_backoff_seconds must be finite and positive")
+            raise JointFMConfigurationError(
+                "max_backoff_seconds must be finite and positive"
+            )
         for status_code in self.status_codes:
             if status_code < 400:
-                raise JointFMConfigurationError("retry status_codes must be HTTP error statuses")
+                raise JointFMConfigurationError(
+                    "retry status_codes must be HTTP error statuses"
+                )
         if isinstance(self.allowed_methods, str | bytes | bytearray):
-            raise JointFMConfigurationError("allowed_methods must be a sequence of HTTP methods")
+            raise JointFMConfigurationError(
+                "allowed_methods must be a sequence of HTTP methods"
+            )
         for method in self.allowed_methods:
             if method == "" or method.strip() != method:
-                raise JointFMConfigurationError("allowed_methods must be non-empty HTTP methods")
+                raise JointFMConfigurationError(
+                    "allowed_methods must be non-empty HTTP methods"
+                )
 
 
 class JointFMHTTPTransport:
@@ -215,7 +229,9 @@ class JointFMHTTPTransport:
                 "JointFM request payload must be JSON-serializable"
             ) from error
         except requests.RequestException as error:
-            raise JointFMRequestError(f"JointFM HTTP request failed: {error}") from error
+            raise JointFMRequestError(
+                f"JointFM HTTP request failed: {error}"
+            ) from error
 
         # Surface HTTP errors as a retryable JointFMHTTPStatusError regardless
         # of body shape: gateways often return text/html for 5xx, and that must
@@ -390,13 +406,19 @@ def _http_status_error(
             response,
             response_body_excerpt_characters,
         ),
-        datarobot_request_id=_datarobot_request_id(response, datarobot_request_id_headers),
+        datarobot_request_id=_datarobot_request_id(
+            response, datarobot_request_id_headers
+        ),
         jointfm_errors=jointfm_errors,
-        retry_after_seconds=_parse_retry_after_header(response.headers.get(RETRY_AFTER_HEADER)),
+        retry_after_seconds=_parse_retry_after_header(
+            response.headers.get(RETRY_AFTER_HEADER)
+        ),
     )
 
 
-def _jointfm_errors(response_payload: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+def _jointfm_errors(
+    response_payload: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
     errors = response_payload.get("errors")
     if not isinstance(errors, Sequence) or isinstance(errors, str | bytes | bytearray):
         return ()

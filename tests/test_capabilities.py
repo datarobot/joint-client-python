@@ -1,3 +1,5 @@
+"""Tests for the capabilities surface of jointfm_client."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
@@ -43,7 +45,9 @@ def _health(
     if data_generation == "default":
         return HealthMetadata.from_payload(payload)
     payload["data_generation"] = (
-        dict(data_generation) if isinstance(data_generation, Mapping) else data_generation
+        dict(data_generation)
+        if isinstance(data_generation, Mapping)
+        else data_generation
     )
     return HealthMetadata.from_payload(payload)
 
@@ -51,6 +55,7 @@ def _health(
 def test_health_metadata_parses_data_generation_block(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Health metadata parses data generation block."""
     health = HealthMetadata.from_payload(json_fixture_loader("health_metadata"))
 
     assert health.default_sample_count == 256
@@ -61,6 +66,7 @@ def test_health_metadata_parses_data_generation_block(
 def test_health_metadata_accepts_null_data_generation(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Health metadata accepts null data generation."""
     payload = json_fixture_loader("health_metadata")
     payload["data_generation"] = None
 
@@ -72,6 +78,7 @@ def test_health_metadata_accepts_null_data_generation(
 def test_plan_forecast_columns_preserves_features_when_supported(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns preserves features when supported."""
     health = _health(json_fixture_loader)
 
     plan = plan_forecast_columns(
@@ -103,6 +110,7 @@ def test_plan_forecast_columns_downgrades_features_when_max_features_is_zero(
     json_fixture_loader: Callable[[str], dict[str, Any]],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Plan forecast columns downgrades features when max features is zero."""
     health = _health(
         json_fixture_loader,
         data_generation={
@@ -143,6 +151,7 @@ def test_plan_forecast_columns_downgrades_features_when_max_features_is_zero(
 def test_plan_forecast_columns_raises_when_targets_exceed_capacity_after_downgrade(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns raises when targets exceed capacity after downgrade."""
     health = _health(
         json_fixture_loader,
         data_generation={
@@ -171,6 +180,7 @@ def test_plan_forecast_columns_raises_when_targets_exceed_capacity_after_downgra
 def test_plan_forecast_columns_raises_when_history_exceeds_training_window(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns raises when history exceeds training window."""
     health = _health(json_fixture_loader)
 
     with pytest.raises(JointFMCapacityError, match="n_input=100"):
@@ -186,6 +196,7 @@ def test_plan_forecast_columns_raises_when_history_exceeds_training_window(
 def test_plan_forecast_columns_accepts_history_shorter_than_training_window(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns accepts history shorter than training window."""
     health = _health(json_fixture_loader)
 
     plan = plan_forecast_columns(
@@ -202,6 +213,7 @@ def test_plan_forecast_columns_accepts_history_shorter_than_training_window(
 def test_plan_forecast_columns_raises_when_query_times_exceed_horizon(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns raises when query times exceed horizon."""
     health = _health(json_fixture_loader)
 
     with pytest.raises(JointFMCapacityError, match="n_output=10"):
@@ -217,6 +229,7 @@ def test_plan_forecast_columns_raises_when_query_times_exceed_horizon(
 def test_plan_forecast_columns_raises_when_data_generation_missing(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns raises when data generation missing."""
     health = _health(json_fixture_loader, data_generation=None)
 
     with pytest.raises(JointFMCapacityError, match="data_generation"):
@@ -232,6 +245,7 @@ def test_plan_forecast_columns_raises_when_data_generation_missing(
 def test_plan_forecast_columns_enforces_min_targets(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns enforces min targets."""
     health = _health(
         json_fixture_loader,
         data_generation={
@@ -260,6 +274,7 @@ def test_plan_forecast_columns_enforces_min_targets(
 def test_plan_forecast_columns_rejects_duplicate_column_names(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns rejects duplicate column names."""
     health = _health(json_fixture_loader)
 
     with pytest.raises(JointFMCapacityError, match="duplicates"):
@@ -275,6 +290,7 @@ def test_plan_forecast_columns_rejects_duplicate_column_names(
 def test_plan_forecast_columns_requires_at_least_one_target(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
+    """Plan forecast columns requires at least one target."""
     health = _health(json_fixture_loader)
 
     with pytest.raises(JointFMCapacityError, match="at least one target"):

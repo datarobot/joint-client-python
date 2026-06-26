@@ -1,3 +1,5 @@
+"""Tests for the transport surface of jointfm_client."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -5,7 +7,7 @@ import json
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import requests
@@ -35,7 +37,10 @@ from jointfm_client import (
 
 
 class StaticResponseAdapter(BaseAdapter):
+    """Static Response Adapter (test helper)."""
+
     def __init__(self, response: requests.Response) -> None:
+        """Init."""
         super().__init__()
         self.response = response
         self.requests: list[requests.PreparedRequest] = []
@@ -50,6 +55,7 @@ class StaticResponseAdapter(BaseAdapter):
         cert=None,
         proxies=None,
     ) -> requests.Response:
+        """Send."""
         self.requests.append(request)
         self.kwargs.append(
             {
@@ -65,11 +71,15 @@ class StaticResponseAdapter(BaseAdapter):
         return self.response
 
     def close(self) -> None:
+        """Close."""
         return None
 
 
 class RecordingTransport:
+    """Recording Transport (test helper)."""
+
     def __init__(self) -> None:
+        """Init."""
         self.health_url: str | None = None
         self.predict_url: str | None = None
         self.payload: Mapping[str, Any] | None = None
@@ -79,11 +89,13 @@ class RecordingTransport:
         self.predict_payload: Mapping[str, Any] = _forecast_response_payload()
 
     def get_json(self, url: str) -> Mapping[str, Any]:
+        """Get json."""
         self.health_url = url
         self.get_count += 1
         return self.health_payload
 
     def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Post json."""
         self.post_count += 1
         if payload.get("request_type") == "health":
             self.health_url = url
@@ -94,22 +106,32 @@ class RecordingTransport:
 
 
 class ClosingSession(requests.Session):
+    """Closing Session (test helper)."""
+
     def __init__(self) -> None:
+        """Init."""
         super().__init__()
         self.closed = False
 
     def close(self) -> None:
+        """Close."""
         self.closed = True
         super().close()
 
 
 class ErroringSession(requests.Session):
+    """Erroring Session (test helper)."""
+
     def request(self, *args: Any, **kwargs: Any) -> requests.Response:
+        """Request."""
         del args, kwargs
         raise requests.ConnectionError("boom")
 
 
-def _health_payload(*, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test") -> dict[str, object]:
+def _health_payload(
+    *, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test"
+) -> dict[str, object]:
+    """Health payload."""
     return {
         "status": "ok",
         "schema_version": "v1",
@@ -133,6 +155,7 @@ def _health_payload(*, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-te
 
 
 def _forecast_response_payload(*, return_mode: str = "mean") -> dict[str, object]:
+    """Forecast response payload."""
     outputs: dict[str, object] = {
         "query_times": [2],
         "requested_columns": ["target"],
@@ -165,6 +188,7 @@ def _response(
     body: bytes,
     headers: Mapping[str, str] | None = None,
 ) -> requests.Response:
+    """Response."""
     response = requests.Response()
     response.status_code = status_code
     response._content = body
@@ -173,6 +197,7 @@ def _response(
 
 
 def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
+    """Transport posts json with headers timeout and user agent."""
     session = requests.Session()
     adapter = StaticResponseAdapter(_response(body=b'{"ok": true}'))
     transport = JointFMHTTPTransport(
@@ -187,7 +212,9 @@ def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
     )
     session.mount("https://", adapter)
 
-    result = transport.post_json("https://example.com/predict", {"schema_version": "v1"})
+    result = transport.post_json(
+        "https://example.com/predict", {"schema_version": "v1"}
+    )
 
     assert result == {"ok": True}
     assert len(adapter.requests) == 1
@@ -203,7 +230,10 @@ def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
     assert json.loads(request_body.decode("utf-8")) == {"schema_version": "v1"}
 
 
-def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session() -> None:
+def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session() -> (
+    None
+):
+    """Transport from settings attaches hosted auth headers and closes session."""
     session = ClosingSession()
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
@@ -225,12 +255,16 @@ def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session
     result = transport.get_json("https://example.com/healthz")
 
     assert result == {"ok": True}
-    assert dict(adapter.requests[0].headers or {})["Authorization"] == "Bearer secret-token"
+    assert (
+        dict(adapter.requests[0].headers or {})["Authorization"]
+        == "Bearer secret-token"
+    )
     transport.close()
     assert session.closed is True
 
 
 def test_transport_from_local_settings_omits_hosted_auth_headers() -> None:
+    """Transport from local settings omits hosted auth headers."""
     session = requests.Session()
     settings = JointFMSettings(
         datarobot_endpoint=None,
@@ -255,9 +289,14 @@ def test_transport_from_local_settings_omits_hosted_auth_headers() -> None:
 
 
 def test_transport_retries_retryable_server_responses() -> None:
-    server, handler = _start_json_server([HTTPStatus.SERVICE_UNAVAILABLE, HTTPStatus.OK])
+    """Transport retries retryable server responses."""
+    server, handler = _start_json_server(
+        [HTTPStatus.SERVICE_UNAVAILABLE, HTTPStatus.OK]
+    )
     try:
-        transport = JointFMHTTPTransport(retry_config=JointFMRetryConfig(max_attempts=2))
+        transport = JointFMHTTPTransport(
+            retry_config=JointFMRetryConfig(max_attempts=2)
+        )
 
         result = transport.post_json(_server_url(server), {"schema_version": "v1"})
 
@@ -332,6 +371,7 @@ def test_transport_raises_status_error_when_gateway_html_persists() -> None:
 
 
 def test_retry_config_builds_expected_urllib3_policy() -> None:
+    """Retry config builds expected urllib3 policy."""
     retry = JointFMRetryConfig(
         max_attempts=4,
         backoff_seconds=0.5,
@@ -346,6 +386,7 @@ def test_retry_config_builds_expected_urllib3_policy() -> None:
 
 
 def test_retry_config_rejects_invalid_max_backoff_seconds() -> None:
+    """Retry config rejects invalid max backoff seconds."""
     with pytest.raises(JointFMConfigurationError, match="max_backoff_seconds"):
         JointFMRetryConfig(max_backoff_seconds=0.0)
     with pytest.raises(JointFMConfigurationError, match="max_backoff_seconds"):
@@ -353,12 +394,18 @@ def test_retry_config_rejects_invalid_max_backoff_seconds() -> None:
 
 
 def test_transport_retries_connection_errors_via_tenacity() -> None:
+    """Transport retries connection errors via tenacity."""
+
     class FlakySession(requests.Session):
+        """Flaky Session (test helper)."""
+
         def __init__(self) -> None:
+            """Init."""
             super().__init__()
             self.call_count = 0
 
         def request(self, *args: Any, **kwargs: Any) -> requests.Response:
+            """Request."""
             del args, kwargs
             self.call_count += 1
             if self.call_count < 3:
@@ -375,19 +422,24 @@ def test_transport_retries_connection_errors_via_tenacity() -> None:
         ),
     )
 
-    result = transport.post_json("https://example.com/predict", {"schema_version": "v1"})
+    result = transport.post_json(
+        "https://example.com/predict", {"schema_version": "v1"}
+    )
 
     assert result == {"ok": True}
     assert session.call_count == 3
 
 
 def test_status_error_carries_parsed_retry_after_seconds() -> None:
+    """Status error carries parsed retry after seconds."""
     server, handler = _start_json_server(
         [HTTPStatus.SERVICE_UNAVAILABLE],
         extra_headers={"Retry-After": "0.5"},
     )
     try:
-        transport = JointFMHTTPTransport(retry_config=JointFMRetryConfig(max_attempts=1))
+        transport = JointFMHTTPTransport(
+            retry_config=JointFMRetryConfig(max_attempts=1)
+        )
 
         with pytest.raises(JointFMHTTPStatusError) as exc_info:
             transport.post_json(_server_url(server), {"schema_version": "v1"})
@@ -400,9 +452,12 @@ def test_status_error_carries_parsed_retry_after_seconds() -> None:
 
 
 def test_transport_does_not_retry_validation_errors() -> None:
+    """Transport does not retry validation errors."""
     server, handler = _start_json_server([HTTPStatus.BAD_REQUEST, HTTPStatus.OK])
     try:
-        transport = JointFMHTTPTransport(retry_config=JointFMRetryConfig(max_attempts=2))
+        transport = JointFMHTTPTransport(
+            retry_config=JointFMRetryConfig(max_attempts=2)
+        )
 
         with pytest.raises(JointFMHTTPStatusError) as exc_info:
             transport.post_json(_server_url(server), {"schema_version": "v1"})
@@ -425,6 +480,7 @@ def test_transport_does_not_retry_validation_errors() -> None:
 
 
 def test_transport_rejects_non_json_serializable_payloads() -> None:
+    """Transport rejects non json serializable payloads."""
     transport = JointFMHTTPTransport(retry_config=JointFMRetryConfig(max_attempts=1))
 
     with pytest.raises(JointFMRequestEncodingError, match="JSON-serializable"):
@@ -435,6 +491,7 @@ def test_transport_rejects_non_json_serializable_payloads() -> None:
 
 
 def test_transport_wraps_request_exceptions() -> None:
+    """Transport wraps request exceptions."""
     transport = JointFMHTTPTransport(
         session=ErroringSession(),
         retry_config=JointFMRetryConfig(max_attempts=1),
@@ -453,6 +510,7 @@ def test_transport_wraps_request_exceptions() -> None:
     ],
 )
 def test_transport_rejects_malformed_json_responses(body: bytes, message: str) -> None:
+    """Transport rejects malformed json responses."""
     session = requests.Session()
     adapter = StaticResponseAdapter(
         _response(
@@ -474,6 +532,7 @@ def test_transport_rejects_malformed_json_responses(body: bytes, message: str) -
 
 
 def test_timeout_and_retry_config_reject_invalid_values() -> None:
+    """Timeout and retry config reject invalid values."""
     with pytest.raises(JointFMConfigurationError, match="connect_seconds"):
         JointFMTimeoutConfig(connect_seconds=0)
 
@@ -485,6 +544,7 @@ def test_timeout_and_retry_config_reject_invalid_values() -> None:
 
 
 def test_client_predict_uses_configured_transport_and_settings() -> None:
+    """Client predict uses configured transport and settings."""
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
@@ -510,6 +570,7 @@ def test_client_predict_uses_configured_transport_and_settings() -> None:
 
 
 def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -> None:
+    """Client health returns typed metadata and caches only when requested."""
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
@@ -542,6 +603,7 @@ def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -
 def test_client_from_env_forwards_timeout_and_retry_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Client from env forwards timeout and retry config."""
     captured_timeout: JointFMTimeoutConfig | None = None
     captured_retry_config: JointFMRetryConfig | None = None
     transport = RecordingTransport()
@@ -560,6 +622,7 @@ def test_client_from_env_forwards_timeout_and_retry_config(
             "X-DataRobot-Execution-ID",
         ),
     ) -> RecordingTransport:
+        """Capture transport."""
         del settings, session, user_agent, response_body_excerpt_characters
         del datarobot_request_id_headers
         nonlocal captured_timeout, captured_retry_config
@@ -595,6 +658,7 @@ def test_client_from_env_forwards_timeout_and_retry_config(
 
 
 def test_client_health_rejects_cached_model_mismatch() -> None:
+    """Client health rejects cached model mismatch."""
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
@@ -667,6 +731,7 @@ def test_client_local_health_keeps_get_request_to_healthz_route() -> None:
 
 
 def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -> None:
+    """Client forecast builds payload from rows and returns typed response."""
     transport = RecordingTransport()
     client = JointFMClient(
         predict_url="http://localhost:8080/predict",
@@ -706,15 +771,22 @@ def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -
 
 
 def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> None:
+    """Client forecast samples batches when service reports sample cap."""
+
     class SampleCapTransport:
+        """Sample Cap Transport (test helper)."""
+
         def __init__(self) -> None:
+            """Init."""
             self.payloads: list[Mapping[str, Any]] = []
             self.sample_offset = 0
 
         def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
             raise AssertionError(f"unexpected health request: {url}")
 
         def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
             assert url == "http://localhost:8080/predict"
             self.payloads.append(dict(payload))
             if len(self.payloads) == 1:
@@ -742,11 +814,9 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
             ]
             self.sample_offset += sample_count
             response_payload = _forecast_response_payload(return_mode="samples")
-            outputs = response_payload["outputs"]
-            assert isinstance(outputs, dict)
+            outputs = cast(dict[str, object], response_payload["outputs"])
             outputs["samples"] = samples
-            diagnostics = response_payload["diagnostics"]
-            assert isinstance(diagnostics, dict)
+            diagnostics = cast(dict[str, object], response_payload["diagnostics"])
             diagnostics["seed"] = payload.get("seed")
             return response_payload
 
@@ -816,6 +886,7 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
 
 
 def test_client_predict_raises_typed_service_error_for_success_payload_errors() -> None:
+    """Client predict raises typed service error for success payload errors."""
     settings = JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
@@ -856,7 +927,10 @@ def test_client_predict_raises_typed_service_error_for_success_payload_errors() 
     )
 
 
-def test_client_forecast_uses_cached_health_model_version_and_validates_mismatch() -> None:
+def test_client_forecast_uses_cached_health_model_version_and_validates_mismatch() -> (
+    None
+):
+    """Client forecast uses cached health model version and validates mismatch."""
     transport = RecordingTransport()
     client = JointFMClient(
         health_url="http://localhost:8080/healthz",
@@ -889,6 +963,7 @@ def test_client_forecast_uses_cached_health_model_version_and_validates_mismatch
 
 
 def test_client_forecast_requires_model_version_without_settings_or_health() -> None:
+    """Client forecast requires model version without settings or health."""
     client = JointFMClient(
         predict_url="http://localhost:8080/predict",
         transport=RecordingTransport(),
@@ -911,12 +986,16 @@ def _start_json_server(
     *,
     extra_headers: Mapping[str, str] | None = None,
 ) -> tuple[ThreadingHTTPServer, type[BaseHTTPRequestHandler]]:
+    """Start json server."""
     response_headers = dict(extra_headers or {})
 
     class JSONHandler(BaseHTTPRequestHandler):
+        """J S O N Handler (test helper)."""
+
         request_count = 0
 
         def do_POST(self) -> None:
+            """Do P O S T."""
             type(self).request_count += 1
             status = statuses[type(self).request_count - 1]
             if status == HTTPStatus.OK:
@@ -936,13 +1015,16 @@ def _start_json_server(
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("X-DataRobot-Request-ID", f"request-id-{type(self).request_count}")
+            self.send_header(
+                "X-DataRobot-Request-ID", f"request-id-{type(self).request_count}"
+            )
             for name, value in response_headers.items():
                 self.send_header(name, value)
             self.end_headers()
             self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
+            """Log message."""
             del format, args
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), JSONHandler)
@@ -962,12 +1044,17 @@ def _start_html_then_json_server(
     """
 
     class RawHandler(BaseHTTPRequestHandler):
+        """Raw Handler (test helper)."""
+
         request_count = 0
 
         def do_POST(self) -> None:
+            """Do P O S T."""
             type(self).request_count += 1
             status, body = responses[type(self).request_count - 1]
-            content_type = "application/json" if body[:1] in (b"{", b"[") else "text/html"
+            content_type = (
+                "application/json" if body[:1] in (b"{", b"[") else "text/html"
+            )
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -975,6 +1062,7 @@ def _start_html_then_json_server(
             self.wfile.write(body)
 
         def log_message(self, format: str, *args: object) -> None:
+            """Log message."""
             del format, args
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), RawHandler)
@@ -984,6 +1072,7 @@ def _start_html_then_json_server(
 
 
 def _server_url(server: ThreadingHTTPServer) -> str:
+    """Server url."""
     host = server.server_address[0]
     port = server.server_address[1]
     return f"http://{host}:{port}/predict"

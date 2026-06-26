@@ -40,6 +40,7 @@ notebooks = [
 
 [dependency-groups]
 dev = [
+    "commitizen>=3.31",
     "ipykernel",
     "pre-commit",
     "ruff",
@@ -78,8 +79,21 @@ select = ["D100", "D101", "D102", "D103"]
 
 [tool.ruff.lint.per-file-ignores]
 "notebooks/**/tests/**" = ["D100", "D101", "D102", "D103"]
-"tests/**" = ["D100", "D101", "D102", "D103"]
-"packages/*/tests/**" = ["D100", "D101", "D102", "D103"]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.0.1"
+version_scheme = "semver"
+tag_format = "v$version"
+update_changelog_on_bump = true
+changelog_file = "CHANGELOG.md"
+changelog_incremental = true
+major_version_zero = true
+version_files = [
+    "pyproject.toml:^version",
+    "src/jointfm_client/__init__.py:__version__",
+    "README.md:Current SDK package version",
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
