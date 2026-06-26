@@ -151,18 +151,21 @@ def test_load_settings_reads_dotenv_without_overriding_environment(tmp_path) -> 
     assert settings.deployment_id == "file-deployment-id"
 
 
-def test_load_settings_requires_explicit_contract_versions() -> None:
+def test_load_settings_requires_explicit_schema_version() -> None:
     env_without_schema_version = _hosted_env()
     del env_without_schema_version[JOINTFM_SCHEMA_VERSION_ENV]
 
     with pytest.raises(JointFMConfigurationError, match=JOINTFM_SCHEMA_VERSION_ENV):
         load_settings(env=env_without_schema_version, dotenv_path=None)
 
+
+def test_load_settings_makes_model_version_optional() -> None:
     env_without_model_version = _hosted_env()
     del env_without_model_version[JOINTFM_MODEL_VERSION_ENV]
 
-    with pytest.raises(JointFMConfigurationError, match=JOINTFM_MODEL_VERSION_ENV):
-        load_settings(env=env_without_model_version, dotenv_path=None)
+    settings = load_settings(env=env_without_model_version, dotenv_path=None)
+
+    assert settings.model_version is None
 
 
 def test_load_settings_rejects_unsupported_schema_version() -> None:

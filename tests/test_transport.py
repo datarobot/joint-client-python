@@ -898,7 +898,7 @@ def test_client_forecast_requires_model_version_without_settings_or_health() -> 
         time_index_mode="ordinal",
     )
 
-    with pytest.raises(JointFMConfigurationError, match="model_version"):
+    with pytest.raises(JointFMConfigurationError, match="health"):
         client.forecast(
             [{"target": 10.0}, {"target": 11.0}],
             schema=schema,

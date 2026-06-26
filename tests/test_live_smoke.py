@@ -11,7 +11,6 @@ from jointfm_client import (
     DATAROBOT_ENDPOINT_ENV,
     JointFMClient,
     JOINTFM_DEPLOYMENT_ID_ENV,
-    JOINTFM_MODEL_VERSION_ENV,
     JOINTFM_SCHEMA_VERSION_ENV,
 )
 
@@ -20,7 +19,6 @@ _REQUIRED_LIVE_ENV_NAMES = (
     DATAROBOT_ENDPOINT_ENV,
     DATAROBOT_API_TOKEN_ENV,
     JOINTFM_SCHEMA_VERSION_ENV,
-    JOINTFM_MODEL_VERSION_ENV,
 )
 
 
@@ -54,7 +52,8 @@ def test_live_datarobot_health_smoke() -> None:
     health = client.health()
 
     assert health.schema_version == client.settings.schema_version
-    assert health.model_version == client.settings.model_version
+    if client.settings.model_version is not None:
+        assert health.model_version == client.settings.model_version
 
 
 def _dotenv_strings(dotenv_path: Path) -> dict[str, str]:

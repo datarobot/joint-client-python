@@ -176,7 +176,7 @@ class JointFMClient:
             raise JointFMConfigurationError(
                 "JointFMClient.predict() requires payload['model_version']"
             )
-        self._resolve_model_version("predict", model_version=model_version)
+        self._resolve_model_version(model_version=model_version)
         response_payload = self._transport_for_request().post_json(predict_url, payload)
         ForecastResponse.raise_for_errors(response_payload)
         return response_payload
@@ -219,7 +219,6 @@ class JointFMClient:
         """Build and submit a forecast request from tabular history inputs."""
         predict_url = self._require_predict_url("forecast")
         resolved_model_version = self._resolve_model_version(
-            "forecast",
             model_version=model_version,
         )
         resolved_schema_version = self._resolve_schema_version(schema_version)
@@ -519,19 +518,17 @@ class JointFMClient:
 
     def _resolve_model_version(
         self,
-        method_name: str,
         *,
         model_version: str | None,
     ) -> str:
         configured_model_version = model_version
         if configured_model_version is None and self.settings is not None:
             configured_model_version = self.settings.model_version
-        if configured_model_version is None and self._health_metadata is not None:
-            return self._health_metadata.model_version
         if configured_model_version is None:
-            raise JointFMConfigurationError(
-                f"JointFMClient.{method_name}() requires model_version when health metadata has not been cached"
-            )
+            if self._health_metadata is None:
+                self.health(cache=True)
+            assert self._health_metadata is not None
+            return self._health_metadata.model_version
 
         normalized_model_version = validate_jointfm_model_version(configured_model_version)
         if (

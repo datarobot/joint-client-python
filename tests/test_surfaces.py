@@ -160,6 +160,59 @@ def test_local_surface_rejects_samples_below_requested_lower_bound(
         server.server_close()
 
 
+def test_hosted_surface_auto_discovers_model_version_when_settings_unpinned(
+    json_fixture_loader: Callable[[str], dict[str, Any]],
+) -> None:
+    request_payload = json_fixture_loader("forecast_mean_request")
+    health_payload = json_fixture_loader("health_metadata")
+    response_payload = json_fixture_loader("forecast_mean_response")
+    predict_path = "/deployments/deployment-id/predictionsUnstructured"
+    server, handler = _start_surface_server(
+        {
+            ("POST", predict_path): {
+                "health": (HTTPStatus.OK, health_payload),
+                None: (HTTPStatus.OK, response_payload),
+            },
+        }
+    )
+    try:
+        base_url = _server_base_url(server)
+        predict_url = f"{base_url}{predict_path}"
+        settings = JointFMSettings(
+            datarobot_endpoint="https://app.datarobot.com/api/v2",
+            datarobot_api_token="secret-token",
+            health_url=predict_url,
+            predict_url=predict_url,
+            deployment_selector="deployment_id",
+            schema_version="v1",
+            deployment_id="deployment-id",
+        )
+        assert settings.model_version is None
+        client = JointFMClient(settings=settings)
+        schema = DataFrameSchema(
+            columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+            time_index_mode="ordinal",
+        )
+
+        result = client.forecast_mean(
+            [{"target": 10.0}, {"target": 11.0}],
+            schema=schema,
+            query_times=[2],
+            requested_columns=["target"],
+            seed=7,
+        )
+
+        assert result.model_version == health_payload["model_version"]
+        assert [entry["body"].get("request_type") for entry in handler.requests] == [
+            "health",
+            None,
+        ]
+        assert handler.requests[1]["body"]["model_version"] == health_payload["model_version"]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def _start_surface_server(
     routes: Mapping[
         tuple[str, str],

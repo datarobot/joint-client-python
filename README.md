@@ -38,11 +38,11 @@ The direct local service exposes `GET /healthz` and `POST /predict`.
 
 Structured SDK defaults live in `jointfm_client.configuration.JointFMConfig` and are mirrored in the checked-in `config.sample.yaml`. Copy `config.sample.yaml` to `config.yaml` and change only the fields needed for your deployment or transport defaults. `JointFMClient.from_env()` and `load_settings()` read `config.yaml` by default, then layer `.env` values over it, then layer process environment variables or the supplied `env` mapping over both. Explicit Python arguments such as `timeout=` and `retry_config=` still override YAML transport defaults.
 
-`JointFMClient.from_env()` and `load_settings()` resolve `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one service selector from that layered configuration. Hosted selectors also require `DATAROBOT_ENDPOINT` and `DATAROBOT_API_TOKEN`; the direct local selector does not use DataRobot credentials. Missing credentials, missing version pins, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
+`JointFMClient.from_env()` and `load_settings()` resolve `JOINTFM_SCHEMA_VERSION` and exactly one service selector from that layered configuration. `JOINTFM_MODEL_VERSION` is optional: when unset the SDK discovers the model version from `/healthz` on first use, and when set the SDK validates it against `/healthz` as a drift-detection guard. Hosted selectors also require `DATAROBOT_ENDPOINT` and `DATAROBOT_API_TOKEN`; the direct local selector does not use DataRobot credentials. Missing credentials, missing schema version, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
 
 `DATAROBOT_ENDPOINT` must be a normalized HTTPS DataRobot API v2 URL ending in `/api/v2`; the SDK stores it without a trailing slash. `DATAROBOT_API_TOKEN` must be non-empty and whitespace-free. The token is excluded from `JointFMSettings` repr output.
 
-Required `.env` entries for hosted SDK calls are `DATAROBOT_ENDPOINT`, `DATAROBOT_API_TOKEN`, `JOINTFM_SCHEMA_VERSION`, `JOINTFM_MODEL_VERSION`, and exactly one hosted selector from the list below. Required `.env` entries for local REST calls are `JOINTFM_LOCAL_BASE_URL`, `JOINTFM_SCHEMA_VERSION`, and `JOINTFM_MODEL_VERSION`. `.env` is the right place for these pins when using `from_env()` because they describe the selected JointFM service rather than a package-wide default. They are not secrets, and callers can still override them with process environment variables. Optional live DataRobot smoke tests additionally read `DATAROBOT_DEPLOYMENT_ID` from `.env` and use it as the hosted deployment ID for the `deployments/{deployment_id}/predictionsUnstructured` route.
+Required `.env` entries for hosted SDK calls are `DATAROBOT_ENDPOINT`, `DATAROBOT_API_TOKEN`, `JOINTFM_SCHEMA_VERSION`, and exactly one hosted selector from the list below. Required `.env` entries for local REST calls are `JOINTFM_LOCAL_BASE_URL` and `JOINTFM_SCHEMA_VERSION`. `JOINTFM_MODEL_VERSION` may be set in `.env` to pin a specific deployment artifact (the SDK then hard-errors on mismatch with `/healthz`); leave it unset to let the SDK use whatever version the deployment currently advertises. `.env` is the right place for these pins when using `from_env()` because they describe the selected JointFM service rather than a package-wide default. They are not secrets, and callers can still override them with process environment variables. Optional live DataRobot smoke tests additionally read `DATAROBOT_DEPLOYMENT_ID` from `.env` and use it as the hosted deployment ID for the `deployments/{deployment_id}/predictionsUnstructured` route.
 
 Example deployment configuration:
 
@@ -51,8 +51,9 @@ deployment:
 	datarobot_endpoint: https://app.datarobot.com/api/v2
 	datarobot_api_token: <token>
 	schema_version: v1
-	model_version: jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 	deployment_id: <deployment-id>
+	# Optional model-version pin; the SDK discovers it from /healthz when unset:
+	# model_version: jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 transport:
 	timeout:
 		connect_seconds: 5.0
@@ -68,8 +69,9 @@ Equivalent `.env` deployment configuration:
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
 JOINTFM_SCHEMA_VERSION=v1
-JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
+# Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 ```
 
 Equivalent local REST configuration for a service started from the `joint` repository with `task service:start CONFIG=nvidia-studentt-m4cr2`:
@@ -77,7 +79,8 @@ Equivalent local REST configuration for a service started from the `joint` repos
 ```dotenv
 JOINTFM_LOCAL_BASE_URL=http://127.0.0.1:8080
 JOINTFM_SCHEMA_VERSION=v1
-JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
+# Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
 ```
 
 Choose exactly one service selector:
@@ -159,7 +162,7 @@ The bootstrap helper resolves the nearest src-layout Python project root, switch
 The current V1 forecast request contract is:
 
 - `schema_version`: exactly `"v1"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
-- `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller, configured as `JOINTFM_MODEL_VERSION` for `from_env()` clients
+- `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller. Optional for `from_env()` clients: when `JOINTFM_MODEL_VERSION` is unset the SDK reads it from `/healthz` on first use; when set it acts as a drift-detection pin
 - `query_mode`: `"forecast"`
 - `return_mode`: one of `"mean"`, `"samples"`, or `"quantiles"`
 - `time_index_mode`: one of `"ordinal"`, `"continuous_float"`, or `"absolute_datetime"`
@@ -234,14 +237,15 @@ uv run python -c "import jointfm_client; print(jointfm_client.__version__)"
 
 ### Configure A Deployment
 
-Create `.env` from `.env.sample` or set the same values in your shell. A hosted forecast needs the DataRobot API v2 endpoint, token, schema and model pins, and exactly one deployment selector:
+Create `.env` from `.env.sample` or set the same values in your shell. A hosted forecast needs the DataRobot API v2 endpoint, token, schema pin, and exactly one deployment selector:
 
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
 JOINTFM_SCHEMA_VERSION=v1
-JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
+# Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 ```
 
 Check that the SDK can resolve the deployment and that the service metadata matches the configured schema and model pins:

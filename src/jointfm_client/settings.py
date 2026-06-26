@@ -55,7 +55,7 @@ class JointFMSettings:
     predict_url: str
     deployment_selector: DeploymentSelector
     schema_version: str
-    model_version: str
+    model_version: str | None = None
     deployment_id: str | None = None
     deployment_url: str | None = None
     deployment_target: str | None = None
@@ -81,9 +81,7 @@ def load_settings(
     schema_version = validate_jointfm_schema_version(
         _required_env(env_values, environment.schema_version)
     )
-    model_version = validate_jointfm_model_version(
-        _required_env(env_values, environment.model_version)
-    )
+    model_version = _optional_model_version(env_values, environment.model_version)
     selector_name = _resolve_single_deployment_selector(env_values, environment)
 
     if selector_name == environment.local_base_url:
@@ -279,6 +277,23 @@ def validate_jointfm_model_version(value: str) -> str:
     """Validate the configured JointFM deployment model version."""
 
     return _normalize_non_whitespace_string(value, JOINTFM_MODEL_VERSION_ENV)
+
+
+def _optional_model_version(
+    env: Mapping[str, str],
+    name: str,
+) -> str | None:
+    """Return the configured model version, or None when unset.
+
+    Unset means the SDK will discover the model version from /healthz at
+    runtime. When set, the value participates in the existing strict
+    drift-check against /healthz as an opt-in safety guard.
+    """
+
+    value = env.get(name)
+    if value is None or value == "":
+        return None
+    return validate_jointfm_model_version(value)
 
 
 def normalize_deployment_id(value: str) -> str:
