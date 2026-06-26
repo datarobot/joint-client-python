@@ -16,7 +16,7 @@ tasks:
       - uv venv --allow-existing --python 3.13.3
       - uv sync --all-groups --extra notebooks
       - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
-      - uv run pre-commit install
+      - uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
       - task: install:typos
       - cmd: 'echo "Activate virtual environment with: . .venv/bin/activate"'
 
@@ -118,7 +118,18 @@ tasks:
 
   pre-commit:
     desc: Run pre-commit hooks on all files
-    cmd: uv run pre-commit run --all-files
+    cmd: |
+      set +e
+      uv run pre-commit run --all-files
+      PRE_COMMIT_STATUS=$?
+      MSG_STATUS=0
+      if [ -s .git/COMMIT_EDITMSG ]; then
+        uv run pre-commit run --hook-stage commit-msg --commit-msg-filename .git/COMMIT_EDITMSG
+        MSG_STATUS=$?
+      fi
+      if [ "$PRE_COMMIT_STATUS" -ne 0 ] || [ "$MSG_STATUS" -ne 0 ]; then
+        exit 1
+      fi
 
   install:typos:
     desc: Install typos using Homebrew when available, otherwise download a release binary with curl
