@@ -30,7 +30,7 @@ tasks:
 
   typecheck:
     desc: Run ty static type checks
-    cmd: uv run ty check
+    cmd: uv run ty check --output-format concise --error-on-warning
 
   test:
     desc: Run the unit test suite
