@@ -7,14 +7,19 @@ name = "jointfm-client"
 version = "0.0.1"
 description = "A Python SDK for the JointFM REST API"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = "Apache-2.0"
+authors = [
+    { name = "Stefan Hackmann", email = "stefan.hackmann@datarobot.com" },
+]
 keywords = ["datarobot", "forecasting", "jointfm", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
@@ -99,7 +104,7 @@ version_files = [
 convention = "google"
 
 [tool.ty]
-environment.python-version = "3.13"
+environment.python-version = "3.11"
 
 [tool.ty.src]
 exclude = ["build/", "dist/", "private/"]
