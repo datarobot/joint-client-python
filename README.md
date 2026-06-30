@@ -295,6 +295,7 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 
 - `task lint`: run Ruff lint checks (read-only)
 - `task format`: run Ruff formatter (rewrites files in place)
+- `task license-check`: verify every Python source file has the required copyright/SPDX header
 - `task typecheck`: run `ty` static type checks
 - `task test`: run unit tests
 - `task coverage`: run tests with coverage enforcement above 90%
@@ -303,6 +304,8 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 - `task release:dry`: preview the next SemVer bump without changing any files
 - `task release`: cut a SemVer release with Commitizen (writes `CHANGELOG.md`, bumps versions, creates tag)
 - `task pre-commit`: run every configured pre-commit hook
+
+Contributors do not need to add copyright or license headers to new Python files manually. The `insert-license` pre-commit hook stamps the standard SPDX header (`Copyright (c) 2026 DataRobot, Inc.` + `SPDX-License-Identifier: Apache-2.0`) into every `.py` file the first time you run `task pre-commit`. Verify the headers are present at any time with `task license-check`.
 
 ## Versioning & Commits
 

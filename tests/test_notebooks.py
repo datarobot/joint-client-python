@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for the notebooks surface of jointfm_client."""
 
 from __future__ import annotations
@@ -99,7 +102,12 @@ def test_resolve_notebook_project_root_raises_outside_workspace(
 
 
 def test_example_notebooks_start_with_bootstrap_cell() -> None:
-    """Example notebooks start with bootstrap cell."""
+    """The first code cell of every example notebook is the bootstrap snippet.
+
+    Notebooks may carry a leading markdown cell (e.g. the SPDX license
+    header inserted by the insert-license pre-commit hook), so the
+    invariant we check is on the first *code* cell rather than cell 0.
+    """
     repo_root = Path(__file__).resolve().parents[1]
     notebook_paths = sorted((repo_root / "notebooks").glob("*.ipynb"))
     expected_bootstrap_source = (
@@ -120,10 +128,13 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
     for notebook_path in notebook_paths:
         payload = json.loads(notebook_path.read_text(encoding="utf-8"))
         assert payload["metadata"]["kernelspec"]["language"] == "python"
-        first_cell = payload["cells"][0]
-        assert first_cell["cell_type"] == "code"
-        assert first_cell["metadata"]["language"] == "python"
-        first_source = "\n".join(line.rstrip("\n") for line in first_cell["source"])
+        first_code_cell = next(
+            cell for cell in payload["cells"] if cell["cell_type"] == "code"
+        )
+        assert first_code_cell["metadata"]["language"] == "python"
+        first_source = "\n".join(
+            line.rstrip("\n") for line in first_code_cell["source"]
+        )
         assert first_source == expected_bootstrap_source
         full_source = "\n".join("".join(cell["source"]) for cell in payload["cells"])
         assert "secret-token" not in full_source

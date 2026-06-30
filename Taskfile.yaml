@@ -24,6 +24,10 @@ tasks:
     desc: Run Ruff lint checks
     cmd: uv run ruff check .
 
+  license-check:
+    desc: Verify every Python source file has the required copyright/SPDX header
+    cmd: uv run ruff check --preview --select CPY001 --extend-exclude '*.ipynb' .
+
   format:
     desc: Run Ruff formatter (rewrites files in place)
     cmd: uv run ruff format .

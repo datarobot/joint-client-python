@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """DataFrame and array adapters for JointFM V1 forecast requests."""
 
 from __future__ import annotations

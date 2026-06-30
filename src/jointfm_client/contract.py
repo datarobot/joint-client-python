@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """JointFM V1 service contract constants, models, and compatibility checks."""
 
 from __future__ import annotations

@@ -5,6 +5,11 @@ default_install_hook_types: [pre-commit, commit-msg]
 repos:
   - repo: local
     hooks:
+      - id: insert-license
+        name: insert license header (python + notebooks)
+        entry: uv run python scripts/insert_license.py --license-filepath .license-header.txt
+        language: system
+        types_or: [python, jupyter]
       - id: commitizen
         name: conventional commit message
         entry: uv run cz check --commit-msg-file

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Structured configuration models and YAML loading for the JointFM SDK."""
 
 from __future__ import annotations

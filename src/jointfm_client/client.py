@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Public synchronous client shape for JointFM V1."""
 
 from __future__ import annotations

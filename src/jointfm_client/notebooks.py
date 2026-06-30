@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Notebook bootstrap helpers for src-layout Python workspaces."""
 
 from __future__ import annotations

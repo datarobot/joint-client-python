@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Shared pytest fixtures for the jointfm_client test suite."""
 
 from __future__ import annotations

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for the contract surface of jointfm_client."""
 
 from collections.abc import Mapping

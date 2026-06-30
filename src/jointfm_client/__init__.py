@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Public API surface for the JointFM Python SDK."""
 
 from jointfm_client.adapters import (

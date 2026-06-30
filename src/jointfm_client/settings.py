@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Settings and URL helpers for DataRobot-hosted JointFM calls."""
 
 from __future__ import annotations

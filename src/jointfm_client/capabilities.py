@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Capability-aware forecast planning built from `/healthz` metadata.
 
 The planner adapts a notebook's desired ``(feature_columns, target_columns)``

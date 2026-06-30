@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Command line interface for the JointFM Python SDK."""
 
 from __future__ import annotations

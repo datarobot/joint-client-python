@@ -1,3 +1,6 @@
+# Copyright (c) 2026 DataRobot, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
 """Synchronous JSON transport for JointFM HTTP calls."""
 
 from __future__ import annotations
