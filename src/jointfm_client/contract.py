@@ -463,7 +463,6 @@ class HealthMetadata:
     supported_return_modes: tuple[str, ...]
     supported_time_index_modes: tuple[str, ...]
     time_index_encoding: str
-    default_sample_count: int
     max_sample_count: int
     data_generation: DataGenerationCapabilities | None = None
 
@@ -517,10 +516,6 @@ class HealthMetadata:
             time_index_encoding=_require_string(
                 payload.get("time_index_encoding"),
                 field="time_index_encoding",
-            ),
-            default_sample_count=_require_positive_int(
-                payload.get("default_sample_count"),
-                field="default_sample_count",
             ),
             max_sample_count=_require_positive_int(
                 payload.get("max_sample_count"),

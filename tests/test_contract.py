@@ -75,7 +75,6 @@ def _health_metadata() -> dict[str, object]:
             "ordinal",
         ],
         "time_index_encoding": "legacy_discrete_grid",
-        "default_sample_count": 256,
         "max_sample_count": 4096,
         "data_generation": {
             "sampler_type": "studentt",

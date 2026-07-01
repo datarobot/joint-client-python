@@ -55,7 +55,6 @@ class FakeHealthClient:
                 "absolute_datetime",
             ),
             time_index_encoding="legacy_discrete_grid",
-            default_sample_count=256,
             max_sample_count=4096,
         )
 

@@ -61,7 +61,6 @@ def test_health_metadata_parses_data_generation_block(
     """Health metadata parses data generation block."""
     health = HealthMetadata.from_payload(json_fixture_loader("health_metadata"))
 
-    assert health.default_sample_count == 256
     assert health.max_sample_count == 4096
     assert health.data_generation == _capabilities()
 
