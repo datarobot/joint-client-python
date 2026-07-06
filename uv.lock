@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-06-15T05:50:13.481685257Z"
+exclude-newer = "2026-06-22T16:12:10.224528154Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -639,7 +639,7 @@ wheels = [
 
 [[package]]
 name = "jointfm-client"
-version = "0.0.1"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

@@ -9,7 +9,7 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Distribution package: `jointfm-client`
 - Import namespace: `jointfm_client`
 - Supported Python: `>=3.13`
-- Current SDK package version: `0.0.1`
+- Current SDK package version: `0.1.0`
 - Current JointFM service schema: `schema_version="v1"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()` and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.

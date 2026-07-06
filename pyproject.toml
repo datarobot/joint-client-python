@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jointfm-client"
-version = "0.0.1"
+version = "0.1.0"
 description = "A Python SDK for the JointFM REST API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -98,7 +98,7 @@ author = "DataRobot, Inc."
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.0.1"
+version = "0.1.0"
 version_scheme = "semver"
 tag_format = "v$version"
 update_changelog_on_bump = true

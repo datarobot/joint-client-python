@@ -10,4 +10,19 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
-## [Unreleased]
+## v0.1.0 (2026-07-06)
+
+### Feat
+
+- enhance release process with pre-bump hooks and improved checks
+- add GitHub Actions workflow for publishing to PyPI and authors file
+- introducing commitizen chore: introducing ruff format
+
+### Fix
+
+- remove default_sample_count from HealthMetadata and related tests
+- add copyright notice
+- no unnecessary typo exceptions
+- pre-commit install type
+
+## v0.0.1 (2026-06-26)
