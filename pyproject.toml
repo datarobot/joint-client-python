@@ -105,6 +105,10 @@ update_changelog_on_bump = true
 changelog_file = "CHANGELOG.md"
 changelog_incremental = true
 major_version_zero = true
+pre_bump_hooks = [
+    "uv lock",
+    "git add uv.lock",
+]
 version_files = [
     "pyproject.toml:^version",
     "src/jointfm_client/__init__.py:__version__",

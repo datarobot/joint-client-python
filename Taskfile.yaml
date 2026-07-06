@@ -89,15 +89,18 @@ tasks:
     cmds:
       - task: release:require-tag
       - |
+        echo "[1/3] checking working tree is clean..."
         if [ -n "$(git status --porcelain)" ]; then
           echo "FAIL: working tree has uncommitted changes; commit or stash first"
           exit 1
         fi
+        echo "[2/3] checking current branch is main..."
         BRANCH="$(git symbolic-ref --short HEAD)"
         if [ "$BRANCH" != "main" ]; then
           echo "FAIL: cz bump must run on main (currently on $BRANCH)"
           exit 1
         fi
+        echo "[3/3] fetching origin/main and checking alignment..."
         git fetch --quiet origin main
         if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/main)" ]; then
           echo "FAIL: local main is not aligned with origin/main; pull/push first"
@@ -109,10 +112,17 @@ tasks:
     desc: Cut a SemVer release with Commitizen (writes CHANGELOG, bumps versions, tags)
     cmds:
       - task: release:check
-      - uv run cz bump --yes {{.CLI_ARGS}}
       - |
-        TAG="$(git describe --tags --abbrev=0)"
-        echo "OK: created tag $TAG. Publish with: git push && git push --tags"
+        PREV="$(uv run cz version --project)"
+        echo "bumping version with Commitizen (writing files, tagging)..."
+        uv run cz bump --yes {{.CLI_ARGS}}
+        NEXT="$(uv run cz version --project)"
+        echo
+        echo "OK: released v$PREV -> v$NEXT"
+        echo "  bumped version in: pyproject.toml, src/jointfm_client/__init__.py, README.md"
+        echo "  updated: CHANGELOG.md, uv.lock"
+        echo "  created tag: v$NEXT"
+        echo "  publish with: git push && git push --tags"
 
   typos:
     desc: Run the spelling checker
