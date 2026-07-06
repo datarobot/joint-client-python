@@ -6,10 +6,17 @@ repos:
   - repo: local
     hooks:
       - id: insert-license
-        name: insert license header (python + notebooks)
-        entry: uv run python scripts/insert_license.py --license-filepath .license-header.txt
+        name: insert license header (python)
+        entry: apache/skywalking-eyes:0.8.0 -c .licenserc.yaml header fix
+        language: docker_image
+        pass_filenames: false
+        require_serial: true
+        always_run: true
+      - id: insert-license-notebooks
+        name: insert license header (notebooks)
+        entry: uv run python scripts/insert_license_notebooks.py
         language: system
-        types_or: [python, jupyter]
+        types: [jupyter]
       - id: commitizen
         name: conventional commit message
         entry: uv run cz check --commit-msg-file

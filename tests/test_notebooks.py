@@ -1,5 +1,16 @@
-# Copyright (c) 2026 DataRobot, Inc.
-# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 DataRobot, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 """Tests for the notebooks surface of jointfm_client."""
 
@@ -104,9 +115,9 @@ def test_resolve_notebook_project_root_raises_outside_workspace(
 def test_example_notebooks_start_with_bootstrap_cell() -> None:
     """The first code cell of every example notebook is the bootstrap snippet.
 
-    Notebooks may carry a leading markdown cell (e.g. the SPDX license
-    header inserted by the insert-license pre-commit hook), so the
-    invariant we check is on the first *code* cell rather than cell 0.
+    Notebooks may carry a leading markdown cell (e.g. an SPDX license
+    header cell), so the invariant we check is on the first *code* cell
+    rather than cell 0.
     """
     repo_root = Path(__file__).resolve().parents[1]
     notebook_paths = sorted((repo_root / "notebooks").glob("*.ipynb"))
