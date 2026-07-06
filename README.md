@@ -397,7 +397,12 @@ git push && git push --tags
 
 Pushing is left manual so you can inspect the bump first. Override the inferred bump level only when needed: `task release -- --increment minor`.
 
-When `jointfm-client` is later published to PyPI, this same tag push is what will trigger the wheel build and upload from CI — keeping the git tag, the wheel filename, `jointfm_client.__version__`, and the PyPI version all in lockstep.
+Pushing the `v*` tag triggers the [`Publish to PyPI`](.github/workflows/publish.yml) workflow, which rebuilds and validates the distribution with `task build` and uploads it to PyPI via [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish) — keeping the git tag, the wheel filename, `jointfm_client.__version__`, and the PyPI version all in lockstep.
+
+The workflow authenticates with PyPI through [trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC), so no API-token secret is stored in the repository. Before the first release, configure it once on PyPI:
+
+- register a [pending trusted publisher](https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/) for the `jointfm-client` project pointing at owner `datarobot`, repository `joint-client-python`, workflow `publish.yml`, and environment `pypi`;
+- create a GitHub Actions environment named `pypi` on the repository (optionally gated with required reviewers) so the publish job can run.
 
 After pulling these changes for the first time, run `uv run pre-commit install` (or `task setup`) once so the new `commit-msg` hook is registered with git.
 

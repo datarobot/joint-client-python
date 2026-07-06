@@ -1,0 +1,72 @@
+name: Publish to PyPI
+
+on:
+    push:
+        tags:
+            - "v*"
+
+concurrency:
+    group: publish-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        name: Build distribution
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Install Task
+              uses: arduino/setup-task@v2
+              with:
+                  version: 3.x
+                  repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Install uv with cache
+              uses: astral-sh/setup-uv@v6
+              with:
+                  python-version: "3.13.3"
+                  enable-cache: true
+                  cache-dependency-glob: |
+                      uv.lock
+                      pyproject.toml
+
+            - name: Sync project dependencies
+              run: uv sync --all-groups --extra notebooks
+
+            - name: Build and validate distribution
+              run: task build
+
+            - name: Upload distribution artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: python-package-distributions
+                  path: dist/
+
+    publish:
+        name: Publish to PyPI
+        needs: build
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment:
+            name: pypi
+            url: https://pypi.org/p/jointfm-client
+        permissions:
+            # Trusted publishing (OIDC) needs a short-lived token; no API token secret required.
+            id-token: write
+        steps:
+            - name: Download distribution artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: python-package-distributions
+                  path: dist/
+
+            - name: Publish to PyPI
+              uses: pypa/gh-action-pypi-publish@release/v1
