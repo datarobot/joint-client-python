@@ -305,7 +305,7 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 - `task release`: cut a SemVer release with Commitizen (writes `CHANGELOG.md`, bumps versions, creates tag)
 - `task pre-commit`: run every configured pre-commit hook
 
-Contributors do not need to add copyright or license headers to new Python files manually. The `insert-license` pre-commit hook stamps the standard SPDX header (`Copyright (c) 2026 DataRobot, Inc.` + `SPDX-License-Identifier: Apache-2.0`) into every `.py` file the first time you run `task pre-commit`. Verify the headers are present at any time with `task license-check`.
+Contributors do not need to add copyright or license headers manually. The `insert-license` pre-commit hook runs [skywalking-eyes](https://github.com/apache/skywalking-eyes) (via the `apache/skywalking-eyes` Docker image, so a running Docker daemon is required) to stamp the standard Apache-2.0 header (`Copyright 2026 DataRobot, Inc. and its affiliates.` followed by the standard "Licensed under the Apache License, Version 2.0" notice) into every `.py` file, and the companion `insert-license-notebooks` hook stamps the same notice into a leading markdown cell of every notebook the first time you run `task pre-commit`. Verify the headers are present at any time with `task license-check`.
 
 ## Versioning & Commits
 
