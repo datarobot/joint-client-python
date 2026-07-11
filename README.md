@@ -307,6 +307,14 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 
 Contributors do not need to add copyright or license headers manually. The `insert-license` pre-commit hook runs [skywalking-eyes](https://github.com/apache/skywalking-eyes) (via the `apache/skywalking-eyes` Docker image, so a running Docker daemon is required) to stamp the standard Apache-2.0 header (`Copyright 2026 DataRobot, Inc. and its affiliates.` followed by the standard "Licensed under the Apache License, Version 2.0" notice) into every `.py` file, and the companion `insert-license-notebooks` hook stamps the same notice into a leading markdown cell of every notebook the first time you run `task pre-commit`. Verify the headers are present at any time with `task license-check`.
 
+Your user must belong to the `docker` group so the hook can reach the daemon:
+
+```shell
+sudo usermod -aG docker "$USER"
+```
+
+Group membership is captured when a process starts, so it must be in effect **before** the editor or its language server launches — start a fresh login session (or reboot) after adding yourself to the group, otherwise the commit hook inherits the old groups and fails with a Docker permission error.
+
 ## Versioning & Commits
 
 The package follows strict [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases are cut with [Commitizen](https://commitizen-tools.github.io/commitizen/), driven by [Conventional Commits](https://www.conventionalcommits.org/), so the commit log is the source of truth for what a release contains.
