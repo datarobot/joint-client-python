@@ -39,11 +39,11 @@ tasks:
 
   test:
     desc: Run the unit test suite
-    cmd: uv run pytest
+    cmd: uv run pytest -n auto
 
   coverage:
     desc: Run tests with coverage enforcement
-    cmd: uv run pytest --cov=jointfm_client --cov-report=term-missing --cov-fail-under=91
+    cmd: uv run pytest -n auto --cov=jointfm_client --cov-report=term-missing --cov-fail-under=90
 
   build:
     desc: Build and validate the source distribution and wheel

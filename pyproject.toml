@@ -57,6 +57,7 @@ dev = [
     "debugpy",
     "pytest",
     "pytest-cov",
+    "pytest-xdist",
     "types-pyyaml",
     "ty",
     "numexpr",
