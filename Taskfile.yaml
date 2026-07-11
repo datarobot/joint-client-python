@@ -17,6 +17,7 @@ tasks:
       - uv sync --all-groups --extra notebooks
       - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
       - uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
+      - task: install:ripgrep
       - task: install:typos
       - cmd: 'echo "Activate virtual environment with: . .venv/bin/activate"'
 
@@ -144,6 +145,30 @@ tasks:
       if [ "$PRE_COMMIT_STATUS" -ne 0 ] || [ "$MSG_STATUS" -ne 0 ]; then
         exit 1
       fi
+
+  install:ripgrep:
+    desc: Install ripgrep using the available system package manager
+    cmds:
+      - |
+        if command -v rg >/dev/null 2>&1; then
+          exit 0
+        fi
+        if command -v apt >/dev/null 2>&1; then
+          sudo apt update && sudo apt install -y ripgrep
+        elif command -v dnf >/dev/null 2>&1; then
+          rpm -q spal-release >/dev/null 2>&1 || sudo dnf install -y spal-release
+          sudo dnf install -y ripgrep
+        elif command -v yum >/dev/null 2>&1; then
+          sudo yum install -y ripgrep
+        elif command -v pacman >/dev/null 2>&1; then
+          sudo pacman -Sy --noconfirm ripgrep
+        elif command -v brew >/dev/null 2>&1; then
+          brew install ripgrep
+        else
+          echo "No supported package manager found for automatic ripgrep installation."
+          echo "Install ripgrep manually, then rerun: task setup"
+          exit 1
+        fi
 
   install:typos:
     desc: Install typos using Homebrew when available, otherwise download a release binary with curl
