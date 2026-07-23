@@ -10,6 +10,10 @@ tasks:
   default:
     cmd: task --list --sort alphanumeric
 
+  run:
+    desc: "Run a command inside the project environment (usage: task run -- python ...)"
+    cmd: uv run {{.CLI_ARGS}}
+
   setup:
     desc: Create or reuse the local Python environment and install repo tooling
     cmds:
