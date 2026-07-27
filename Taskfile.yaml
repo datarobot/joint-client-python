@@ -18,6 +18,13 @@ tasks:
       - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
       - uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
       - task: install:typos
+      - cmd: |
+          if [ -f .env ]; then
+            echo ".env already exists; leaving it untouched"
+          else
+            cp .env.sample .env
+            echo "Created .env from .env.sample"
+          fi
       - cmd: 'echo "Activate virtual environment with: . .venv/bin/activate"'
 
   lint:
