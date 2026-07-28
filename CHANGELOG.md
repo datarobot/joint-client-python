@@ -10,6 +10,12 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.2.1 (2026-07-28)
+
+### Fix
+
+- increase timeout and retry settings for transport configuration (#3)
+
 ## v0.2.0 (2026-07-28)
 
 ### Feat
