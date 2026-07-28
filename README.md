@@ -59,7 +59,7 @@ transport:
 		connect_seconds: 5.0
 		read_seconds: 60.0
 	retry:
-		max_attempts: 3
+		max_attempts: 5
 		backoff_seconds: 1
 ```
 
@@ -152,6 +152,7 @@ Checked-in example notebooks live under `notebooks/`. Every example starts with:
 
 ```python
 from jointfm_client import bootstrap_notebook
+
 bootstrap_notebook(add_src_root=True)
 ```
 
@@ -169,7 +170,7 @@ The current V1 forecast request contract is:
 - `time_column`: required for `"absolute_datetime"`, and used for ordered ordinal or continuous histories when supplied
 - `query_times`: non-empty future forecast times only
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
-- `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds a service-reported sample cap, `forecast_samples(...)` automatically resubmits capped prediction batches and returns one merged `SampleForecastResult`.
+- `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`.
 
 V1 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
@@ -303,9 +304,18 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 - `task check`: run the static code quality gate (typos, lint, format check, type checks)
 - `task release:dry`: preview the next SemVer bump without changing any files
 - `task release`: cut a SemVer release with Commitizen (writes `CHANGELOG.md`, bumps versions, creates tag)
+- `task release:publish`: push the release commit and its tag to `origin`, which triggers the PyPI publish workflow
 - `task pre-commit`: run every configured pre-commit hook
 
 Contributors do not need to add copyright or license headers manually. The `insert-license` pre-commit hook runs [skywalking-eyes](https://github.com/apache/skywalking-eyes) (via the `apache/skywalking-eyes` Docker image, so a running Docker daemon is required) to stamp the standard Apache-2.0 header (`Copyright 2026 DataRobot, Inc. and its affiliates.` followed by the standard "Licensed under the Apache License, Version 2.0" notice) into every `.py` file, and the companion `insert-license-notebooks` hook stamps the same notice into a leading markdown cell of every notebook the first time you run `task pre-commit`. Verify the headers are present at any time with `task license-check`.
+
+Your user must belong to the `docker` group so the hook can reach the daemon:
+
+```shell
+sudo usermod -aG docker "$USER"
+```
+
+Group membership is captured when a process starts, so it must be in effect **before** the editor or its language server launches — start a fresh login session (or reboot) after adding yourself to the group, otherwise the commit hook inherits the old groups and fails with a Docker permission error.
 
 ## Versioning & Commits
 
@@ -384,7 +394,7 @@ After that, every future `task release` finds its base tag automatically.
 ```bash
 task release:dry      # preview the next version + CHANGELOG entries
 task release          # bump, write CHANGELOG.md, create the annotated tag
-git push && git push --tags
+task release:publish  # push the bump commit and the tag
 ```
 
 `task release` first runs `task release:check` (clean tree, on `main`, in sync with `origin/main`), then calls `cz bump` which:
@@ -395,7 +405,9 @@ git push && git push --tags
 - bumps `version =` in `pyproject.toml`, `__version__` in `src/jointfm_client/__init__.py`, and the "Current SDK package version" line in this README,
 - commits the bump and creates the annotated tag.
 
-Pushing is left manual so you can inspect the bump first. Override the inferred bump level only when needed: `task release -- --increment minor`.
+Publishing is a separate task on purpose, so you can inspect the inferred bump before anything leaves your machine — Commitizen derives the version from commit messages, and a stray `feat:` where you meant `fix:` is only fixable while the release is still local. Override the inferred bump level when needed: `task release -- --increment minor`.
+
+`task release:publish` re-checks that the working tree is clean, that you are on `main`, that the tag points at `HEAD`, and that `origin` does not already have the tag, prints the commits about to be pushed, asks for confirmation on a terminal, and then pushes `main` and that single tag. It pushes one explicit tag rather than `git push --tags`, so unrelated local tags are never published.
 
 Pushing the `v*` tag triggers the [`Publish to PyPI`](.github/workflows/publish.yml) workflow, which rebuilds and validates the distribution with `task build` and uploads it to PyPI via [`pypa/gh-action-pypi-publish`](https://github.com/pypa/gh-action-pypi-publish) — keeping the git tag, the wheel filename, `jointfm_client.__version__`, and the PyPI version all in lockstep.
 
