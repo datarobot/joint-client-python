@@ -8,7 +8,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | --- | --- |
 | `JointFMClient` | Synchronous client for hosted or local JointFM endpoints. Use `from_env()` for `.env` and `config.yaml` backed hosted settings, `health()` for typed service metadata, `predict(payload)` for low-level JSON prediction, `forecast(...)` for validated tabular forecasts, and the `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` convenience methods for typed forecast results. `health()` probes `GET /healthz` for local deployments and POSTs `{"request_type": "health"}` to `predict_url` for hosted DataRobot deployments because the DataRobot deployment gateway only proxies the unstructured prediction route. |
 
-`JointFMClient.from_env()` loads `config.yaml`, optional `.env` values, and process environment variables. `JointFMClient.health(cache=True)` caches health metadata only when requested. `JointFMClient.predict(payload)` requires `payload["model_version"]`; high-level forecast helpers resolve the configured model version when the caller does not pass one explicitly. When `forecast_samples(...)` requests more samples than the service cap allows, the client discovers the cap from the structured service error, resubmits capped prediction batches, and returns one merged `SampleForecastResult`.
+`JointFMClient.from_env()` loads `config.yaml`, optional `.env` values, and process environment variables. `JointFMClient.health(cache=True)` caches health metadata only when requested. `JointFMClient.predict(payload)` requires `payload["model_version"]`; high-level forecast helpers resolve the configured model version when the caller does not pass one explicitly. When `forecast_samples(...)` requests an explicit `n_samples`, the client learns the deployment's `max_sample_count` from health metadata before the first prediction, splits oversized requests into capped prediction batches, and returns one merged `SampleForecastResult`. Clients configured without a reachable health route fall back to discovering the cap from the structured service error.
 
 ## Contract Classes
 
@@ -156,7 +156,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `query_times` | Yes | Non-empty future forecast horizon values. Absolute datetimes are encoded timezone-stably. |
 | `time_column` | For absolute datetime, optional otherwise | Name of the history time column. It must not duplicate a modeled column name. |
 | `requested_columns` | Optional | Output column names or integer indices. Duplicates are rejected. Defaults to all modeled columns. |
-| `n_samples` | Samples and quantiles controls | Positive sample count when sampling controls are needed. Oversized sample forecasts are batched automatically after the service reports its cap. |
+| `n_samples` | Samples and quantiles controls | Positive sample count when sampling controls are needed. Oversized sample forecasts are batched automatically against the cap advertised in health metadata. |
 | `quantiles` | Quantiles mode | Quantile levels in `(0, 1)`, required for `return_mode="quantiles"`. |
 | `seed` | Optional | Integer random seed for reproducible stochastic outputs. |
 | `time_scale_seconds` | Optional | Positive scale for continuous time indexes. |
@@ -220,7 +220,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `supported_return_modes` | Must match the SDK V1 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
 | `supported_time_index_modes` | Must match the SDK V1 time-index modes. |
 | `time_index_encoding` | Time-index encoding advertised by the service. |
-| `max_sample_count` | Maximum sample-count budget the service accepts in a single prediction. Oversized requests are batched automatically by the client. |
+| `max_sample_count` | Maximum sample-count budget the service accepts in a single prediction. The client reads it during health probes and batches oversized sample requests locally, so the service never has to reject them. |
 | `data_generation` | Optional capability block describing the deployed checkpoint's advertised data-generation capacity. Absent on legacy checkpoints; present payloads expose `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
 
 ## Docstring Enforcement
