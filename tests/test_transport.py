@@ -898,6 +898,97 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
     ]
 
 
+def test_client_forecast_samples_batches_from_advertised_health_sample_cap() -> None:
+    """Client batches oversized sample requests without a rejected predict call."""
+
+    class HealthCapTransport:
+        """Health Cap Transport (test helper)."""
+
+        def __init__(self) -> None:
+            """Init."""
+            self.payloads: list[Mapping[str, Any]] = []
+            self.health_count = 0
+            self.sample_offset = 0
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            assert url == "http://127.0.0.1:8080/healthz"
+            self.health_count += 1
+            payload = _health_payload()
+            payload["max_sample_count"] = 2
+            return payload
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            assert url == "http://127.0.0.1:8080/predict"
+            self.payloads.append(dict(payload))
+            sample_count = payload["n_samples"]
+            assert isinstance(sample_count, int)
+            samples = [
+                [[float(sample_index)]]
+                for sample_index in range(
+                    self.sample_offset,
+                    self.sample_offset + sample_count,
+                )
+            ]
+            self.sample_offset += sample_count
+            response_payload = _forecast_response_payload(return_mode="samples")
+            outputs = cast(dict[str, object], response_payload["outputs"])
+            outputs["samples"] = samples
+            diagnostics = cast(dict[str, object], response_payload["diagnostics"])
+            diagnostics["seed"] = payload.get("seed")
+            return response_payload
+
+    settings = JointFMSettings(
+        datarobot_endpoint=None,
+        datarobot_api_token=None,
+        health_url="http://127.0.0.1:8080/healthz",
+        predict_url="http://127.0.0.1:8080/predict",
+        deployment_selector="local_service",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        local_base_url="http://127.0.0.1:8080",
+    )
+    transport = HealthCapTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+    schema = DataFrameSchema(
+        columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+        time_index_mode="ordinal",
+    )
+
+    result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        n_samples=5,
+        seed=7,
+    )
+
+    assert isinstance(result, SampleForecastResult)
+    assert result.samples == (
+        ((0.0,),),
+        ((1.0,),),
+        ((2.0,),),
+        ((3.0,),),
+        ((4.0,),),
+    )
+    assert transport.health_count == 1
+    assert [payload["n_samples"] for payload in transport.payloads] == [2, 2, 1]
+
+    client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        n_samples=2,
+        seed=7,
+    )
+
+    assert transport.health_count == 1
+    assert [payload["n_samples"] for payload in transport.payloads] == [2, 2, 1, 2]
+
+
 def test_client_predict_raises_typed_service_error_for_success_payload_errors() -> None:
     """Client predict raises typed service error for success payload errors."""
     settings = JointFMSettings(

@@ -168,6 +168,7 @@ class JointFMClient:
             payload, expected_model_version=expected_model_version
         )
         metadata = HealthMetadata.from_payload(payload)
+        self._sample_batch_cap = metadata.max_sample_count
         if cache:
             self._health_metadata = metadata
         return metadata
@@ -177,6 +178,12 @@ class JointFMClient:
         if self.settings is None:
             return False
         return self.settings.deployment_selector != "local_service"
+
+    def _health_route_configured(self) -> bool:
+        """Return whether a health probe can be issued with the current settings."""
+        if self._uses_predict_route_for_health():
+            return self.predict_url is not None
+        return self.health_url is not None
 
     def _fetch_hosted_health_payload(self) -> Mapping[str, Any]:
         """POST a minimal health discriminator to the hosted predict URL."""
@@ -294,7 +301,7 @@ class JointFMClient:
                 nullable_columns=nullable_columns,
                 bounds=bounds,
             )
-        sample_cap = _known_sample_batch_cap(payload, self._sample_batch_cap)
+        sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
             return self._forecast_sample_batches(predict_url, payload, sample_cap)
 
@@ -458,6 +465,22 @@ class JointFMClient:
             seed=seed,
             schema_version=schema_version,
         )
+
+    def _resolve_sample_batch_cap(self, payload: Mapping[str, Any]) -> int | None:
+        """Return the batch size for an oversized sample request, if one applies.
+
+        The deployment advertises its sampling budget as ``max_sample_count`` in
+        `/healthz`, so an explicit sample request probes health once and batches
+        locally instead of sending a request the service is guaranteed to reject.
+        The cap is remembered for the client's lifetime. Clients configured
+        without a reachable health route fall back to learning the cap from the
+        service's ``INPUT_SIZE_EXCEEDED`` response.
+        """
+        if _requested_sample_count(payload) is None:
+            return None
+        if self._sample_batch_cap is None and self._health_route_configured():
+            self.health()
+        return _known_sample_batch_cap(payload, self._sample_batch_cap)
 
     def _forecast_sample_batches(
         self,
