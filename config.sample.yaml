@@ -26,11 +26,11 @@ deployment:
   model_version: null
 transport:
   timeout:
-    connect_seconds: 5.0
-    read_seconds: 60.0
+    connect_seconds: 10.0
+    read_seconds: 120.0
   retry:
-    max_attempts: 5
-    backoff_seconds: 1
+    max_attempts: 10
+    backoff_seconds: 2
     max_backoff_seconds: 60.0
     status_codes:
       - 408

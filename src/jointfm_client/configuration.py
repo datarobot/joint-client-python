@@ -130,8 +130,8 @@ class HostedDeploymentConfig(_ConfigModel):
 class TimeoutConfig(_ConfigModel):
     """Default connect and read timeout values for HTTP requests."""
 
-    connect_seconds: float = 5.0
-    read_seconds: float = 60.0
+    connect_seconds: float = 10.0
+    read_seconds: float = 120.0
 
     @field_validator("connect_seconds", "read_seconds")
     @classmethod
@@ -144,8 +144,8 @@ class TimeoutConfig(_ConfigModel):
 class RetryConfig(_ConfigModel):
     """Default retry policy for transient HTTP failures."""
 
-    max_attempts: int = 5
-    backoff_seconds: float = 1
+    max_attempts: int = 10
+    backoff_seconds: float = 2
     max_backoff_seconds: float = 60.0
     status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504)
 
