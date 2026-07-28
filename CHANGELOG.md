@@ -10,6 +10,17 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.2.0 (2026-07-28)
+
+### Feat
+
+- add .env file creation step in setup task
+
+### Fix
+
+- clarify guidelines on handling destructive git operations and temporary identifiers
+- update notebook kernel display name to match version format
+
 ## v0.1.0 (2026-07-06)
 
 ### Feat
