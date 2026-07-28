@@ -116,9 +116,9 @@ def test_load_configuration_layers_yaml_over_defaults(tmp_path: Path) -> None:
     assert config.deployment.datarobot_endpoint == "https://app.datarobot.com/api/v2"
     assert config.deployment.datarobot_api_token == "yaml-token"
     assert config.transport.timeout.connect_seconds == 1.25
-    assert config.transport.timeout.read_seconds == 60.0
+    assert config.transport.timeout.read_seconds == 120.0
     assert config.transport.retry.max_attempts == 2
-    assert config.transport.retry.backoff_seconds == 1
+    assert config.transport.retry.backoff_seconds == 2
     assert config.transport.retry.status_codes == (500,)
 
 

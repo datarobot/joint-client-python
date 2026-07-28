@@ -56,11 +56,11 @@ deployment:
 	# model_version: jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 transport:
 	timeout:
-		connect_seconds: 5.0
-		read_seconds: 60.0
+		connect_seconds: 10.0
+		read_seconds: 120.0
 	retry:
-		max_attempts: 5
-		backoff_seconds: 1
+		max_attempts: 10
+		backoff_seconds: 2
 ```
 
 Equivalent `.env` deployment configuration:
