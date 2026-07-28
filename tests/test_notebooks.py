@@ -123,6 +123,7 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
     notebook_paths = sorted((repo_root / "notebooks").glob("*.ipynb"))
     expected_bootstrap_source = (
         "from jointfm_client import bootstrap_notebook\n"
+        "\n"
         "bootstrap_notebook(add_src_root=True)"
     )
 

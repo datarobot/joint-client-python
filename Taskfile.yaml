@@ -127,7 +127,59 @@ tasks:
         echo "  bumped version in: pyproject.toml, src/jointfm_client/__init__.py, README.md"
         echo "  updated: CHANGELOG.md, uv.lock"
         echo "  created tag: v$NEXT"
-        echo "  publish with: git push && git push --tags"
+        echo "  publish with: task release:publish"
+
+  release:publish:
+    desc: Push the release commit and its tag to origin (triggers the PyPI publish workflow)
+    cmds:
+      - task: release:require-tag
+      - |
+        TAG="v$(uv run cz version --project)"
+        echo "[1/5] checking working tree is clean..."
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "FAIL: working tree has uncommitted changes; commit them first"
+          exit 1
+        fi
+        echo "[2/5] checking current branch is main..."
+        BRANCH="$(git symbolic-ref --short HEAD)"
+        if [ "$BRANCH" != "main" ]; then
+          echo "FAIL: releases are published from main (currently on $BRANCH)"
+          exit 1
+        fi
+        echo "[3/5] checking $TAG points at HEAD..."
+        if [ "$(git rev-parse "$TAG^{commit}")" != "$(git rev-parse HEAD)" ]; then
+          echo "FAIL: $TAG does not point at HEAD."
+          echo "The wheel published from this tag must match the commit on main."
+          echo "This usually means the release PR was squashed or rebased instead"
+          echo "of merged, so the tagged commit is no longer part of main."
+          exit 1
+        fi
+        echo "[4/5] checking $TAG is not already published..."
+        git fetch --quiet origin main
+        if [ -n "$(git ls-remote --tags origin "refs/tags/$TAG")" ]; then
+          echo "FAIL: origin already has $TAG; PyPI does not allow reusing a version."
+          echo "Cut a new release instead of republishing this one."
+          exit 1
+        fi
+        echo "[5/5] commits to be pushed to origin/main:"
+        git --no-pager log --oneline origin/main..HEAD
+        echo
+        if [ -t 0 ]; then
+          printf 'Push main and %s to origin? This publishes %s to PyPI. [y/N] ' "$TAG" "$TAG"
+          read -r CONFIRMATION
+          case "$CONFIRMATION" in
+            y|Y|yes|YES) ;;
+            *)
+              echo "OK: aborted, nothing was pushed"
+              exit 1
+              ;;
+          esac
+        fi
+        git push origin main
+        git push origin "refs/tags/$TAG"
+        echo
+        echo "OK: pushed main and $TAG to origin"
+        echo "  the Publish to PyPI workflow now builds and uploads $TAG"
 
   typos:
     desc: Run the spelling checker
