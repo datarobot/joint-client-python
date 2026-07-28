@@ -59,7 +59,7 @@ transport:
 		connect_seconds: 5.0
 		read_seconds: 60.0
 	retry:
-		max_attempts: 3
+		max_attempts: 5
 		backoff_seconds: 1
 ```
 

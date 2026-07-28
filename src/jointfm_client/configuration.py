@@ -144,9 +144,9 @@ class TimeoutConfig(_ConfigModel):
 class RetryConfig(_ConfigModel):
     """Default retry policy for transient HTTP failures."""
 
-    max_attempts: int = 3
+    max_attempts: int = 5
     backoff_seconds: float = 1
-    max_backoff_seconds: float = 30.0
+    max_backoff_seconds: float = 60.0
     status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504)
 
     @field_validator("max_attempts")
