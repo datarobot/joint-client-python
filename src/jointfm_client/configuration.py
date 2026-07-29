@@ -144,7 +144,7 @@ class TimeoutConfig(_ConfigModel):
 class RetryConfig(_ConfigModel):
     """Default retry policy for transient HTTP failures."""
 
-    max_attempts: int = 10
+    max_attempts: int = 20
     backoff_seconds: float = 2
     max_backoff_seconds: float = 60.0
     status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504)
