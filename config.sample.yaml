@@ -35,6 +35,7 @@ transport:
     status_codes:
       - 408
       - 429
+      - 470
       - 500
       - 502
       - 503

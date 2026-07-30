@@ -147,7 +147,10 @@ class RetryConfig(_ConfigModel):
     max_attempts: int = 20
     backoff_seconds: float = 2
     max_backoff_seconds: float = 60.0
-    status_codes: tuple[int, ...] = (408, 429, 500, 502, 503, 504)
+    # 470 is DataRobot's non-standard "prediction was not successful" code,
+    # returned while a deployment's custom model is stopped or still warming
+    # up; retrying bridges warm-up windows after a deployment (re)start.
+    status_codes: tuple[int, ...] = (408, 429, 470, 500, 502, 503, 504)
 
     @field_validator("max_attempts")
     @classmethod
