@@ -29,12 +29,13 @@ transport:
     connect_seconds: 10.0
     read_seconds: 120.0
   retry:
-    max_attempts: 10
+    max_attempts: 20
     backoff_seconds: 2
     max_backoff_seconds: 60.0
     status_codes:
       - 408
       - 429
+      - 470
       - 500
       - 502
       - 503

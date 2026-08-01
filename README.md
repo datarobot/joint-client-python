@@ -59,7 +59,7 @@ transport:
 		connect_seconds: 10.0
 		read_seconds: 120.0
 	retry:
-		max_attempts: 10
+		max_attempts: 20
 		backoff_seconds: 2
 ```
 
@@ -174,7 +174,7 @@ The current V1 forecast request contract is:
 
 V1 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
-DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas` and `yfinance` (the latter powers the Yahoo Finance download in `notebooks/forecast_trading.ipynb`):
+DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas`:
 
 ```bash
 uv add "jointfm-client[notebooks]"

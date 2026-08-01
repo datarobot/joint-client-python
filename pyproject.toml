@@ -45,7 +45,6 @@ jointfm-client = "jointfm_client.cli:main"
 [project.optional-dependencies]
 notebooks = [
     "pandas>=3.0.2",
-    "yfinance>=0.2,<1",
 ]
 
 [dependency-groups]
