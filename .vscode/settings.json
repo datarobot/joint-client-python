@@ -1,4 +1,5 @@
 {
+    "chat.editing.revealNextChangeOnResolve": false,
     "python.defaultInterpreterPath": ".venv/bin/python",
     "python-envs.pythonProjects": [
         {
