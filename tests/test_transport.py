@@ -155,6 +155,7 @@ def _health_payload(
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
         "head": "studentt",
+        "decoding_strategy": "parallel_dense",
         "supported_query_modes": ["forecast"],
         "supported_return_modes": ["mean", "samples", "quantiles", "log_prob"],
         "supported_time_index_modes": [

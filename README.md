@@ -201,7 +201,7 @@ Known V1 error codes are `VALIDATION_ERROR`, `SCHEMA_VERSION_MISMATCH`, `MODEL_V
 
 ## Compatibility Policy
 
-The SDK supports only `schema_version="v1"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, or mode capabilities outside the recorded V1 contract.
+The SDK supports only `schema_version="v1"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded V1 contract, or an unsupported `decoding_strategy`.
 
 Callers should pass an expected `model_version` when they already know which deployment artifact they intend to use. A mismatch is treated as a hard compatibility error rather than silently downgrading, guessing, or retrying another model.
 

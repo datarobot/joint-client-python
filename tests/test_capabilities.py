@@ -73,6 +73,7 @@ def test_health_metadata_parses_data_generation_block(
     health = HealthMetadata.from_payload(json_fixture_loader("health_metadata"))
 
     assert health.max_sample_count == 4096
+    assert health.decoding_strategy == "parallel_dense"
     assert health.data_generation == _capabilities()
 
 

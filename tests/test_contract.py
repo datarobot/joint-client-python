@@ -46,6 +46,7 @@ from jointfm_client import (
     SUPPORTED_COLUMN_MODALITIES,
     SUPPORTED_COLUMN_ROLES,
     STRUCTURED_ERROR_CODES,
+    SUPPORTED_DECODING_STRATEGIES,
     SUPPORTED_QUERY_MODES,
     SUPPORTED_RETURN_MODES,
     SUPPORTED_TIME_INDEX_MODES,
@@ -78,6 +79,7 @@ def _health_metadata() -> dict[str, object]:
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
         "head": "dummy",
+        "decoding_strategy": "parallel_dense",
         "supported_query_modes": ["forecast"],
         "supported_return_modes": ["mean", "quantiles", "samples", "log_prob"],
         "supported_time_index_modes": [
@@ -126,6 +128,11 @@ def test_mode_and_error_contract() -> None:
         "ordinal",
         "continuous_float",
         "absolute_datetime",
+    )
+    assert SUPPORTED_DECODING_STRATEGIES == (
+        "parallel_dense",
+        "parallel_scalable",
+        "autoregressive",
     )
     assert SUPPORTED_COLUMN_MODALITIES == (
         "numeric",
@@ -778,6 +785,7 @@ def test_health_and_response_models_parse_current_payloads() -> None:
     )
 
     assert health.model_version == "jointfm-inference:0.2.0+ckpt.smoke-1"
+    assert health.decoding_strategy == "parallel_dense"
     assert isinstance(response, MeanForecastResult)
     assert response.requested_columns == ("target",)
     assert response.mean == ((100.0,),)
@@ -1011,6 +1019,42 @@ def test_validate_service_metadata_rejects_unknown_advertised_mode() -> None:
 
     with pytest.raises(UnsupportedServiceContractError, match="supported_return_modes"):
         validate_service_metadata(metadata)
+
+
+def test_validate_service_metadata_rejects_unknown_decoding_strategy() -> None:
+    """Validate service metadata rejects an unknown decoding strategy."""
+    metadata = _health_metadata()
+    metadata["decoding_strategy"] = "diffusion"
+
+    with pytest.raises(UnsupportedServiceContractError, match="decoding_strategy"):
+        validate_service_metadata(metadata)
+
+
+def test_validate_service_metadata_rejects_missing_decoding_strategy() -> None:
+    """Validate service metadata rejects a missing decoding strategy."""
+    metadata = _health_metadata()
+    del metadata["decoding_strategy"]
+
+    with pytest.raises(UnsupportedServiceContractError, match="decoding_strategy"):
+        validate_service_metadata(metadata)
+
+
+def test_validate_service_metadata_rejects_empty_decoding_strategy() -> None:
+    """Validate service metadata rejects an empty decoding strategy."""
+    metadata = _health_metadata()
+    metadata["decoding_strategy"] = ""
+
+    with pytest.raises(UnsupportedServiceContractError, match="decoding_strategy"):
+        validate_service_metadata(metadata)
+
+
+def test_health_metadata_parses_each_supported_decoding_strategy() -> None:
+    """Health metadata accepts every supported decoding strategy."""
+    for strategy in SUPPORTED_DECODING_STRATEGIES:
+        payload = _health_metadata()
+        payload["decoding_strategy"] = strategy
+        health = HealthMetadata.from_payload(payload)
+        assert health.decoding_strategy == strategy
 
 
 def test_validate_service_metadata_rejects_malformed_capabilities() -> None:

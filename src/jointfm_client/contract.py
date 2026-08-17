@@ -56,6 +56,11 @@ TimeIndexMode: TypeAlias = Literal[
     "continuous_float",
     "absolute_datetime",
 ]
+DecodingStrategy: TypeAlias = Literal[
+    "parallel_dense",
+    "parallel_scalable",
+    "autoregressive",
+]
 ColumnModality: TypeAlias = Literal[
     "numeric",
     "categorical",
@@ -91,6 +96,11 @@ SUPPORTED_TIME_INDEX_MODES: Final[tuple[TimeIndexMode, ...]] = (
     "ordinal",
     "continuous_float",
     "absolute_datetime",
+)
+SUPPORTED_DECODING_STRATEGIES: Final[tuple[DecodingStrategy, ...]] = (
+    "parallel_dense",
+    "parallel_scalable",
+    "autoregressive",
 )
 SUPPORTED_COLUMN_MODALITIES: Final[tuple[ColumnModality, ...]] = (
     "numeric",
@@ -470,6 +480,7 @@ class HealthMetadata:
     checkpoint_path: str
     device: str
     head: str
+    decoding_strategy: DecodingStrategy
     supported_query_modes: tuple[str, ...]
     supported_return_modes: tuple[str, ...]
     supported_time_index_modes: tuple[str, ...]
@@ -512,6 +523,9 @@ class HealthMetadata:
             ),
             device=_require_string(payload.get("device"), field="device"),
             head=_require_string(payload.get("head"), field="head"),
+            decoding_strategy=_require_decoding_strategy(
+                payload.get("decoding_strategy")
+            ),
             supported_query_modes=_string_tuple(
                 payload.get("supported_query_modes"),
                 field="supported_query_modes",
@@ -1088,7 +1102,12 @@ def validate_service_metadata(
     *,
     expected_model_version: str | None = None,
 ) -> None:
-    """Validate `/healthz` metadata against the SDK's V1 compatibility policy."""
+    """Validate `/healthz` metadata against the SDK's V1 compatibility policy.
+
+    Requires schema ``v1``, the expected model version when supplied, the
+    advertised V1 query/return/time-index modes, and a supported
+    ``decoding_strategy``.
+    """
     schema_version = _required_string(metadata, "schema_version")
     if schema_version != SCHEMA_VERSION:
         raise UnsupportedSchemaVersionError(
@@ -1118,6 +1137,7 @@ def validate_service_metadata(
         field="supported_time_index_modes",
         supported_values=SUPPORTED_TIME_INDEX_MODES,
     )
+    _require_decoding_strategy(metadata.get("decoding_strategy"))
 
 
 def _required_string(metadata: Mapping[str, Any], field: str) -> str:
@@ -1128,6 +1148,21 @@ def _required_string(metadata: Mapping[str, Any], field: str) -> str:
             f"JointFM health metadata field {field!r} must be a non-empty string"
         )
     return value
+
+
+def _require_decoding_strategy(value: Any) -> DecodingStrategy:
+    """Return a supported horizon decoding strategy from health metadata."""
+    if not isinstance(value, str) or value == "":
+        raise UnsupportedServiceContractError(
+            "JointFM health metadata field 'decoding_strategy' must be a "
+            "non-empty string"
+        )
+    if value not in SUPPORTED_DECODING_STRATEGIES:
+        raise UnsupportedServiceContractError(
+            "Unsupported JointFM decoding_strategy: expected one of "
+            f"{sorted(SUPPORTED_DECODING_STRATEGIES)!r}, got {value!r}"
+        )
+    return cast(DecodingStrategy, value)
 
 
 def _require_exact_values(
