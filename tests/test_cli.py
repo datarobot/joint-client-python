@@ -67,6 +67,8 @@ class FakeHealthClient:
             ),
             time_index_encoding="legacy_discrete_grid",
             max_sample_count=4096,
+            decoding_strategy="parallel_dense",
+            backend="legacy",
         )
 
 
@@ -125,6 +127,8 @@ def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
     payload = json.loads(output)
     assert exit_code == 0
     assert payload["service"]["status"] == "ok"
+    assert payload["service"]["decoding_strategy"] == "parallel_dense"
+    assert payload["service"]["backend"] == "legacy"
     assert payload["deployment"]["deployment_id"] == "deployment-id"
     assert "secret-token" not in output
 

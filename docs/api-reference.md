@@ -18,7 +18,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | `DataFrameSchema` | Describes tabular history layout. Fields are `columns`, `time_index_mode`, `time_column`, `time_scale_seconds`, `use_local_normalized_time`, `calendar_id`, and `timezone`. |
 | `ForecastRequestMetadata` | Holds `schema_version`, `model_version`, `query_mode`, and `return_mode` for one forecast request. |
 | `ForecastRequest` | Validated request object that combines metadata, schema, history rows, query times, requested columns, sample or quantile controls, and `seed`, then emits a JSON-compatible payload with `to_payload()`. |
-| `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, advertised modes, time-index encoding, `max_sample_count`, and an optional `data_generation` block carrying advertised capacity limits. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. |
+| `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, advertised modes, time-index encoding, `max_sample_count`, an optional `data_generation` block carrying advertised capacity limits, and the optional informational `backend` and `decoding_strategy` fields. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. |
 | `DataGenerationCapabilities` | Optional service-health block describing the deployed checkpoint's data-generation capacity. Fields are `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
 | `ForecastPlan` | Validated forecast plan returned by `plan_forecast_columns`. Fields are `columns` (ordered `ColumnSpec` tuple), `feature_columns`, `target_columns` (both reflect post-downgrade roles), and `requested_columns` (the caller's original target list). |
 | `StructuredError` | One structured JointFM service error with `code`, `message`, and optional `field`. |
@@ -215,6 +215,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `checkpoint_version` | Loaded checkpoint version. |
 | `checkpoint_path` | Loaded checkpoint path reported by the service. |
 | `device` | Device used by inference. |
+| `backend` | Informational serving backend: `legacy` or `architecture`. `None` when the deployment predates the field. Not client-selectable and never validated by the SDK. |
 | `head` | Active forecast head. |
 | `supported_query_modes` | Must match the SDK V1 query modes. |
 | `supported_return_modes` | Must match the SDK V1 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
@@ -222,6 +223,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `time_index_encoding` | Time-index encoding advertised by the service. |
 | `max_sample_count` | Maximum sample-count budget the service accepts in a single prediction. The client reads it during health probes and batches oversized sample requests locally, so the service never has to reject them. |
 | `data_generation` | Optional capability block describing the deployed checkpoint's advertised data-generation capacity. Absent on legacy checkpoints; present payloads expose `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
+| `decoding_strategy` | Informational decoding strategy of the mounted checkpoint: `parallel_dense`, `parallel_scalable`, or `autoregressive`. `None` when the service reports it as null (architecture-backend containers and checkpoint configs predating the field) or omits it entirely. It is singular rather than a `supported_*` list because the strategy is fixed at training time and no request field can select another, so it never constrains which requests a deployment accepts and the SDK does not validate against it. Callers still need it to interpret responses: only `autoregressive` couples horizons, so under either parallel strategy `samples` are per-horizon marginal draws rather than coherent sample paths. |
 
 ## Docstring Enforcement
 

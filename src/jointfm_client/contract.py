@@ -476,6 +476,8 @@ class HealthMetadata:
     time_index_encoding: str
     max_sample_count: int
     data_generation: DataGenerationCapabilities | None = None
+    decoding_strategy: str | None = None
+    backend: str | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
@@ -533,6 +535,11 @@ class HealthMetadata:
                 field="max_sample_count",
             ),
             data_generation=parsed_data_generation,
+            decoding_strategy=_optional_string(
+                payload.get("decoding_strategy"),
+                field="decoding_strategy",
+            ),
+            backend=_optional_string(payload.get("backend"), field="backend"),
         )
 
 

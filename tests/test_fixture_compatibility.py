@@ -47,6 +47,8 @@ def test_health_fixture_matches_current_v1_service_contract(
     metadata = HealthMetadata.from_payload(payload)
 
     assert metadata.schema_version == "v1"
+    assert metadata.decoding_strategy == payload["decoding_strategy"]
+    assert metadata.backend == payload["backend"]
     assert metadata.supported_return_modes == (
         "mean",
         "samples",

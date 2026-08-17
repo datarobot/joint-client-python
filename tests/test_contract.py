@@ -77,6 +77,7 @@ def _health_metadata() -> dict[str, object]:
         "checkpoint_version": "smoke-1",
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
+        "backend": "legacy",
         "head": "dummy",
         "supported_query_modes": ["forecast"],
         "supported_return_modes": ["mean", "quantiles", "samples", "log_prob"],
@@ -87,6 +88,7 @@ def _health_metadata() -> dict[str, object]:
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": 4096,
+        "decoding_strategy": "parallel_dense",
         "data_generation": {
             "sampler_type": "studentt",
             "min_features": 0,
@@ -778,12 +780,36 @@ def test_health_and_response_models_parse_current_payloads() -> None:
     )
 
     assert health.model_version == "jointfm-inference:0.2.0+ckpt.smoke-1"
+    assert health.decoding_strategy == "parallel_dense"
+    assert health.backend == "legacy"
     assert isinstance(response, MeanForecastResult)
     assert response.requested_columns == ("target",)
     assert response.mean == ((100.0,),)
     assert response.outputs.requested_columns == ("target",)
     assert response.diagnostics.horizon_count == 1
     assert response.errors == ()
+
+
+@pytest.mark.parametrize("field", ["decoding_strategy", "backend"])
+def test_health_metadata_treats_informational_fields_as_optional(field: str) -> None:
+    """Health metadata treats informational fields as optional."""
+    missing = _health_metadata()
+    del missing[field]
+    assert getattr(HealthMetadata.from_payload(missing), field) is None
+
+    explicit_null = _health_metadata()
+    explicit_null[field] = None
+    assert getattr(HealthMetadata.from_payload(explicit_null), field) is None
+
+
+@pytest.mark.parametrize("field", ["decoding_strategy", "backend"])
+def test_health_metadata_rejects_non_string_informational_fields(field: str) -> None:
+    """Health metadata rejects non string informational fields."""
+    metadata = _health_metadata()
+    metadata[field] = 7
+
+    with pytest.raises(ValueError, match=field):
+        HealthMetadata.from_payload(metadata)
 
 
 def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -> None:
