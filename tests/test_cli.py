@@ -58,6 +58,7 @@ class FakeHealthClient:
             checkpoint_path="/models/jointfm.pt",
             device="cpu",
             head="studentt",
+            decoding_strategy="parallel_dense",
             supported_query_modes=("forecast",),
             supported_return_modes=("mean", "samples", "quantiles", "log_prob"),
             supported_time_index_modes=(
@@ -125,6 +126,7 @@ def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
     payload = json.loads(output)
     assert exit_code == 0
     assert payload["service"]["status"] == "ok"
+    assert payload["service"]["decoding_strategy"] == "parallel_dense"
     assert payload["deployment"]["deployment_id"] == "deployment-id"
     assert "secret-token" not in output
 

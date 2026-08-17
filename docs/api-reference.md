@@ -18,7 +18,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | `DataFrameSchema` | Describes tabular history layout. Fields are `columns`, `time_index_mode`, `time_column`, `time_scale_seconds`, `use_local_normalized_time`, `calendar_id`, and `timezone`. |
 | `ForecastRequestMetadata` | Holds `schema_version`, `model_version`, `query_mode`, and `return_mode` for one forecast request. |
 | `ForecastRequest` | Validated request object that combines metadata, schema, history rows, query times, requested columns, sample or quantile controls, and `seed`, then emits a JSON-compatible payload with `to_payload()`. |
-| `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, advertised modes, time-index encoding, `max_sample_count`, and an optional `data_generation` block carrying advertised capacity limits. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. |
+| `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, `decoding_strategy`, advertised modes, time-index encoding, `max_sample_count`, and an optional `data_generation` block carrying advertised capacity limits. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. |
 | `DataGenerationCapabilities` | Optional service-health block describing the deployed checkpoint's data-generation capacity. Fields are `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
 | `ForecastPlan` | Validated forecast plan returned by `plan_forecast_columns`. Fields are `columns` (ordered `ColumnSpec` tuple), `feature_columns`, `target_columns` (both reflect post-downgrade roles), and `requested_columns` (the caller's original target list). |
 | `StructuredError` | One structured JointFM service error with `code`, `message`, and optional `field`. |
@@ -73,7 +73,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JointFMCompatibilityError` | Base class for fail-fast service compatibility failures. |
 | `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v1`. |
 | `UnsupportedModelVersionError` | The service or response model version differs from the configured or requested version. |
-| `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities outside the SDK's V1 contract. |
+| `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities or a `decoding_strategy` outside the recorded V1 contract. |
 
 ## Public Functions
 
@@ -96,7 +96,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `build_local_predict_url(service_base_url)` | Build a direct local service `/predict` URL. |
 | `build_datarobot_prediction_headers(api_token)` | Build hosted prediction headers: bearer authorization, broad accept header, and JSON content type. |
 | `build_forecast_payload(...)` | Build a validated JSON-compatible V1 forecast payload from explicit schema, history rows, query times, and return-mode controls. |
-| `validate_service_metadata(metadata, expected_model_version=None)` | Validate the service-health metadata against schema `v1`, the expected model when supplied, and advertised V1 mode capabilities. |
+| `validate_service_metadata(metadata, expected_model_version=None)` | Validate the service-health metadata against schema `v1`, the expected model when supplied, advertised V1 mode capabilities, and a supported `decoding_strategy`. |
 | `infer_column_specs_from_dataframe(frame, ...)` | Infer ordered `ColumnSpec` objects from a pandas `DataFrame` and explicit role, modality, mapping, nullability, time-value, and bounds hints. |
 | `dataframe_to_history_rows(frame, schema)` | Convert a pandas `DataFrame` into server-compatible `history_rows`. |
 | `arrays_to_history_rows(values, columns=..., ...)` | Convert a two-dimensional NumPy-like array plus column metadata into `history_rows`. |
@@ -216,6 +216,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `checkpoint_path` | Loaded checkpoint path reported by the service. |
 | `device` | Device used by inference. |
 | `head` | Active forecast head. |
+| `decoding_strategy` | Horizon decoding mode advertised by the mounted model. Must be one of `SUPPORTED_DECODING_STRATEGIES`: `parallel_dense`, `parallel_scalable`, or `autoregressive`. Parallel strategies decode every horizon in one pass; `autoregressive` rolls horizons sequentially. |
 | `supported_query_modes` | Must match the SDK V1 query modes. |
 | `supported_return_modes` | Must match the SDK V1 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
 | `supported_time_index_modes` | Must match the SDK V1 time-index modes. |
