@@ -22,6 +22,7 @@ from jointfm_client import (
     DATAROBOT_API_TOKEN_ENV,
     DATAROBOT_ENDPOINT_ENV,
     JOINTFM_DEPLOYMENT_ID_ENV,
+    JOINTFM_DEPLOYMENT_IDS_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
     JOINTFM_LOCAL_BASE_URL_ENV,
@@ -502,3 +503,45 @@ def test_jointfm_client_from_env_attaches_non_secret_settings() -> None:
     assert client.settings is not None
     assert client.settings.predict_url.endswith("/predictionsUnstructured")
     assert "secret-token" not in repr(client)
+
+
+def test_load_settings_with_deployment_ids_builds_instance_pool() -> None:
+    """Load settings with deployment ids builds instance pool."""
+    env = _hosted_env(**{JOINTFM_DEPLOYMENT_IDS_ENV: "primary-id,backup-id"})
+    del env[JOINTFM_DEPLOYMENT_ID_ENV]
+
+    settings = load_settings(env=env, dotenv_path=None)
+
+    assert settings.deployment_selector == "deployment_ids"
+    assert [instance.deployment_id for instance in settings.instances] == [
+        "primary-id",
+        "backup-id",
+    ]
+    assert settings.instances[0].predict_url.endswith(
+        "/deployments/primary-id/predictionsUnstructured"
+    )
+    assert settings.instances[1].predict_url.endswith(
+        "/deployments/backup-id/predictionsUnstructured"
+    )
+
+
+def test_load_settings_rejects_deployment_ids_combined_with_deployment_id() -> None:
+    """Load settings rejects deployment ids combined with deployment id."""
+    with pytest.raises(JointFMConfigurationError, match="cannot be combined"):
+        load_settings(
+            env=_hosted_env(**{JOINTFM_DEPLOYMENT_IDS_ENV: "primary-id,backup-id"}),
+            dotenv_path=None,
+        )
+
+
+def test_load_settings_rejects_deployment_ids_with_fewer_than_two_unique_ids() -> None:
+    """Load settings rejects deployment ids with fewer than two unique ids."""
+    env = _hosted_env(**{JOINTFM_DEPLOYMENT_IDS_ENV: "only-id"})
+    del env[JOINTFM_DEPLOYMENT_ID_ENV]
+    with pytest.raises(JointFMConfigurationError, match="at least two unique"):
+        load_settings(env=env, dotenv_path=None)
+
+    env = _hosted_env(**{JOINTFM_DEPLOYMENT_IDS_ENV: "same-id,same-id"})
+    del env[JOINTFM_DEPLOYMENT_ID_ENV]
+    with pytest.raises(JointFMConfigurationError, match="at least two unique"):
+        load_settings(env=env, dotenv_path=None)

@@ -39,6 +39,7 @@ from jointfm_client import (
     JointFMRequestError,
     JointFMHTTPStatusError,
     JointFMHTTPTransport,
+    JointFMInstanceSettings,
     JointFMResponseDecodeError,
     JointFMServiceError,
     JointFMRetryConfig,
@@ -1181,3 +1182,66 @@ def _server_url(server: ThreadingHTTPServer) -> str:
     host = server.server_address[0]
     port = server.server_address[1]
     return f"http://{host}:{port}/predict"
+
+
+def test_client_predict_round_robins_across_pool_instances() -> None:
+    """Client predict round robins across pool instances."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url=primary,
+        predict_url=primary,
+        deployment_selector="deployment_ids",
+        schema_version="v1",
+        instances=(
+            JointFMInstanceSettings(
+                deployment_id="primary-id",
+                predict_url=primary,
+                health_url=primary,
+            ),
+            JointFMInstanceSettings(
+                deployment_id="backup-id",
+                predict_url=backup,
+                health_url=backup,
+            ),
+        ),
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="primary-id",
+    )
+
+    class PoolTransport:
+        """Pool Transport (test helper)."""
+
+        def __init__(self) -> None:
+            """Init."""
+            self.urls: list[str] = []
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            self.urls.append(url)
+            if payload.get("request_type") == "health":
+                return _health_payload()
+            return _forecast_response_payload()
+
+    transport = PoolTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+    payload = {
+        "schema_version": "v1",
+        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+    }
+
+    client.predict(payload)
+    client.predict(payload)
+
+    assert transport.urls == [primary, backup]
