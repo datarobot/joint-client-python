@@ -77,12 +77,10 @@ class JointFMInstancePool:
         for instance in self._instances:
             try:
                 payload = self._transport.post_json(
-                    instance.predict_url,
-                    {"request_type": HEALTH_REQUEST_TYPE},
+                    instance.predict_url, {"request_type": HEALTH_REQUEST_TYPE}
                 )
                 validate_service_metadata(
-                    payload,
-                    expected_model_version=self._expected_model_version,
+                    payload, expected_model_version=self._expected_model_version
                 )
                 healthy.append((instance, HealthMetadata.from_payload(payload)))
             except Exception as error:
@@ -143,9 +141,7 @@ class JointFMInstancePool:
 
 def _log_unavailable(deployment_id: str, error: BaseException) -> None:
     logger.warning(
-        "JointFM instance unavailable: deployment_id=%s error=%s",
-        deployment_id,
-        error,
+        "JointFM instance unavailable: deployment_id=%s error=%s", deployment_id, error
     )
 
 
