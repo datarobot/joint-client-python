@@ -25,7 +25,6 @@ from jointfm_client import (
     JointFMHTTPStatusError,
     JointFMInstancePool,
     JointFMInstanceSettings,
-    JointFMRequestError,
     UnsupportedModelVersionError,
     UnsupportedServiceContractError,
 )
@@ -33,24 +32,22 @@ from jointfm_client import (
 
 def _instance(deployment_id: str) -> JointFMInstanceSettings:
     """Instance."""
-    url = (
-        "https://app.datarobot.com/api/v2/deployments/"
-        f"{deployment_id}/predictionsUnstructured"
-    )
     return JointFMInstanceSettings(
         deployment_id=deployment_id,
-        predict_url=url,
-        health_url=url,
+        predict_url=(
+            "https://app.datarobot.com/api/v2/deployments/"
+            f"{deployment_id}/predictionsUnstructured"
+        ),
     )
 
 
-def _health_payload(
+def _health(
     *,
     model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
     checkpoint_version: str = "sdk-test",
     max_sample_count: int = 4096,
 ) -> dict[str, object]:
-    """Health payload."""
+    """Health."""
     return {
         "status": "ok",
         "schema_version": "v1",
@@ -73,7 +70,7 @@ def _health_payload(
     }
 
 
-class _PoolTransport:
+class _Transport:
     """Transport that serves health/predict per deployment id."""
 
     def __init__(
@@ -86,7 +83,6 @@ class _PoolTransport:
         self.health_by_id = dict(health_by_id or {})
         self.fail_ids = fail_ids
         self.fail_status = fail_status
-        self.urls: list[str] = []
 
     def get_json(self, url: str) -> Mapping[str, Any]:
         """Get json."""
@@ -94,90 +90,73 @@ class _PoolTransport:
 
     def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """Post json."""
-        self.urls.append(url)
         deployment_id = url.rstrip("/").split("/")[-2]
         if deployment_id in self.fail_ids:
-            if self.fail_status < 0:
-                raise JointFMRequestError(f"{deployment_id} unreachable")
             raise JointFMHTTPStatusError(
                 f"{deployment_id} unavailable",
                 status_code=self.fail_status,
                 response_body_excerpt="unavailable",
             )
         if payload.get("request_type") == "health":
-            return self.health_by_id.get(deployment_id, _health_payload())
+            return self.health_by_id.get(deployment_id, _health())
         return {"ok": True, "deployment_id": deployment_id}
 
 
-def test_pool_round_robin_and_retries_next_instance_on_470() -> None:
-    """Pool round robin and retries next instance on 470."""
+def test_pool_retries_next_instance_on_470() -> None:
+    """Pool retries next instance on 470."""
     pool = JointFMInstancePool(
         instances=(_instance("a"), _instance("b")),
-        transport=_PoolTransport(fail_ids=frozenset({"a"}), fail_status=470),
+        transport=_Transport(fail_ids=frozenset({"a"})),
     )
-
     assert pool.next_instance().deployment_id == "a"
     assert pool.next_instance().deployment_id == "b"
-    assert pool.next_instance().deployment_id == "a"
-
-    result = pool.post_json({"schema_version": "v1"})
-
-    assert result == {"ok": True, "deployment_id": "b"}
+    assert pool.post_json({"schema_version": "v1"}) == {
+        "ok": True,
+        "deployment_id": "b",
+    }
 
 
 def test_pool_raises_when_all_instances_unavailable() -> None:
     """Pool raises when all instances unavailable."""
-    transport = _PoolTransport(fail_ids=frozenset({"a", "b"}), fail_status=470)
     pool = JointFMInstancePool(
         instances=(_instance("a"), _instance("b")),
-        transport=transport,
+        transport=_Transport(fail_ids=frozenset({"a", "b"})),
     )
-
     with pytest.raises(JointFMHTTPStatusError, match="unavailable"):
         pool.post_json({"schema_version": "v1"})
 
 
-def test_pool_health_rejects_model_or_checkpoint_mismatch() -> None:
-    """Pool health rejects model or checkpoint mismatch."""
-    pool = JointFMInstancePool(
-        instances=(_instance("a"), _instance("b")),
-        transport=_PoolTransport(
-            health_by_id={
-                "a": _health_payload(),
-                "b": _health_payload(
-                    model_version="jointfm-inference:9.9.9+ckpt.other"
-                ),
-            }
-        ),
-    )
+def test_pool_health_rejects_mismatch_and_aligns_sample_cap() -> None:
+    """Pool health rejects mismatch and aligns sample cap."""
     with pytest.raises(UnsupportedModelVersionError, match="model_version"):
-        pool.probe_all_health()
+        JointFMInstancePool(
+            instances=(_instance("a"), _instance("b")),
+            transport=_Transport(
+                health_by_id={
+                    "a": _health(),
+                    "b": _health(model_version="jointfm-inference:9.9.9+ckpt.other"),
+                }
+            ),
+        ).probe_all_health()
 
-    pool = JointFMInstancePool(
-        instances=(_instance("a"), _instance("b")),
-        transport=_PoolTransport(
-            health_by_id={
-                "a": _health_payload(checkpoint_version="ckpt-a"),
-                "b": _health_payload(checkpoint_version="ckpt-b"),
-            }
-        ),
-    )
     with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
-        pool.probe_all_health()
+        JointFMInstancePool(
+            instances=(_instance("a"), _instance("b")),
+            transport=_Transport(
+                health_by_id={
+                    "a": _health(checkpoint_version="ckpt-a"),
+                    "b": _health(checkpoint_version="ckpt-b"),
+                }
+            ),
+        ).probe_all_health()
 
-
-def test_pool_health_uses_minimum_max_sample_count() -> None:
-    """Pool health uses minimum max sample count."""
-    pool = JointFMInstancePool(
+    metadata = JointFMInstancePool(
         instances=(_instance("a"), _instance("b")),
-        transport=_PoolTransport(
+        transport=_Transport(
             health_by_id={
-                "a": _health_payload(max_sample_count=100),
-                "b": _health_payload(max_sample_count=40),
+                "a": _health(max_sample_count=100),
+                "b": _health(max_sample_count=40),
             }
         ),
-    )
-
-    metadata = pool.probe_all_health()
-
+    ).probe_all_health()
     assert metadata.max_sample_count == 40

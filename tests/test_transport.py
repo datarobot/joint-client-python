@@ -1187,16 +1187,9 @@ def _server_url(server: ThreadingHTTPServer) -> str:
     return f"http://{host}:{port}/predict"
 
 
-def test_client_predict_round_robins_across_pool_instances() -> None:
-    """Client predict round robins across pool instances."""
-    primary = (
-        "https://app.datarobot.com/api/v2/deployments/"
-        "primary-id/predictionsUnstructured"
-    )
-    backup = (
-        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
-    )
-    settings = JointFMSettings(
+def _pool_settings(primary: str, backup: str) -> JointFMSettings:
+    """Pool settings."""
+    return JointFMSettings(
         datarobot_endpoint="https://app.datarobot.com/api/v2",
         datarobot_api_token="secret-token",
         health_url=primary,
@@ -1204,20 +1197,24 @@ def test_client_predict_round_robins_across_pool_instances() -> None:
         deployment_selector="deployment_ids",
         schema_version="v1",
         instances=(
-            JointFMInstanceSettings(
-                deployment_id="primary-id",
-                predict_url=primary,
-                health_url=primary,
-            ),
-            JointFMInstanceSettings(
-                deployment_id="backup-id",
-                predict_url=backup,
-                health_url=backup,
-            ),
+            JointFMInstanceSettings(deployment_id="primary-id", predict_url=primary),
+            JointFMInstanceSettings(deployment_id="backup-id", predict_url=backup),
         ),
         model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
         deployment_id="primary-id",
     )
+
+
+def test_client_pool_health_gate_and_round_robin() -> None:
+    """Client pool health gate and round robin."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = _pool_settings(primary, backup)
 
     class PoolTransport:
         """Pool Transport (test helper)."""
@@ -1243,46 +1240,11 @@ def test_client_predict_round_robins_across_pool_instances() -> None:
         "schema_version": "v1",
         "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
     }
-
     client.predict(payload)
     client.predict(payload)
-
     assert transport.urls[:2] == [primary, backup]
     assert transport.urls[2:] == [primary, backup]
     assert client._health_metadata is not None
-
-
-def test_client_pool_predict_with_pin_probes_health_before_traffic() -> None:
-    """Client pool predict with pin probes health before traffic."""
-    primary = (
-        "https://app.datarobot.com/api/v2/deployments/"
-        "primary-id/predictionsUnstructured"
-    )
-    backup = (
-        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
-    )
-    settings = JointFMSettings(
-        datarobot_endpoint="https://app.datarobot.com/api/v2",
-        datarobot_api_token="secret-token",
-        health_url=primary,
-        predict_url=primary,
-        deployment_selector="deployment_ids",
-        schema_version="v1",
-        instances=(
-            JointFMInstanceSettings(
-                deployment_id="primary-id",
-                predict_url=primary,
-                health_url=primary,
-            ),
-            JointFMInstanceSettings(
-                deployment_id="backup-id",
-                predict_url=backup,
-                health_url=backup,
-            ),
-        ),
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
-        deployment_id="primary-id",
-    )
 
     class MismatchTransport:
         """Mismatch Transport (test helper)."""
@@ -1295,16 +1257,9 @@ def test_client_pool_predict_with_pin_probes_health_before_traffic() -> None:
             """Post json."""
             if payload.get("request_type") != "health":
                 raise AssertionError("predict must not run before pool health gate")
-            if "primary-id" in url:
+            if url == primary:
                 return _health_payload(checkpoint_version="ckpt-a")
             return _health_payload(checkpoint_version="ckpt-b")
 
-    client = JointFMClient(settings=settings, transport=MismatchTransport())
-
     with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
-        client.predict(
-            {
-                "schema_version": "v1",
-                "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
-            }
-        )
+        JointFMClient(settings=settings, transport=MismatchTransport()).predict(payload)

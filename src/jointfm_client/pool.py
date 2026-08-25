@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 import logging
 import threading
 from typing import Any
@@ -39,17 +39,13 @@ from jointfm_client.transport import JSONTransport
 
 logger = logging.getLogger(__name__)
 
-# Match the transport's retryable statuses so pool failover covers DR 470
-# (stopped / warming deployment) and other transient codes, not only gateways.
 _POOL_RETRYABLE_HTTP_STATUS_CODES = frozenset(DEFAULT_RETRY_STATUS_CODES)
 
 
 class JointFMInstancePool:
-    """Distributes JointFM requests across multiple hosted deployment instances.
+    """Round-robin JointFM requests across hosted deployments.
 
-    Callers should pass a fail-fast transport (``max_attempts=1``). Per-instance
-    transport retries would delay moving to the next peer under outage; this pool
-    retries across instances after logging unavailable ones.
+    Use a fail-fast transport (``max_attempts=1``); this pool retries peers.
     """
 
     def __init__(
@@ -75,42 +71,33 @@ class JointFMInstancePool:
             return instance
 
     def probe_all_health(self) -> HealthMetadata:
-        """Probe instances; require matching checkpoint identity across healthy peers.
-
-        Unavailable instances are logged and skipped. Healthy peers must share
-        ``model_version`` and ``checkpoint_version``. The returned metadata uses
-        the minimum ``max_sample_count`` across those peers so sample batching
-        stays within every instance's advertised cap.
-        """
-        metadata_by_instance: list[tuple[JointFMInstanceSettings, HealthMetadata]] = []
+        """Probe peers; require matching model/checkpoint; return min sample cap."""
+        healthy: list[tuple[JointFMInstanceSettings, HealthMetadata]] = []
         last_error: BaseException | None = None
         for instance in self._instances:
             try:
-                payload = self._fetch_hosted_health_payload(instance)
+                payload = self._transport.post_json(
+                    instance.predict_url,
+                    {"request_type": HEALTH_REQUEST_TYPE},
+                )
                 validate_service_metadata(
                     payload,
                     expected_model_version=self._expected_model_version,
                 )
-                metadata_by_instance.append(
-                    (instance, HealthMetadata.from_payload(payload))
-                )
+                healthy.append((instance, HealthMetadata.from_payload(payload)))
             except Exception as error:
-                if not _should_retry_on_next_instance(error):
+                if not _is_pool_retryable(error):
                     raise
                 last_error = error
-                logger.warning(
-                    "JointFM instance unavailable: deployment_id=%s error=%s",
-                    instance.deployment_id,
-                    error,
-                )
+                _log_unavailable(instance.deployment_id, error)
 
-        if not metadata_by_instance:
+        if not healthy:
             assert last_error is not None
             raise last_error
 
-        reference = metadata_by_instance[0][1]
-        aligned_max_sample_count = reference.max_sample_count
-        for instance, metadata in metadata_by_instance[1:]:
+        reference = healthy[0][1]
+        max_samples = reference.max_sample_count
+        for instance, metadata in healthy[1:]:
             if metadata.model_version != reference.model_version:
                 raise UnsupportedModelVersionError(
                     "JointFM deployment pool model_version mismatch: "
@@ -124,53 +111,45 @@ class JointFMInstancePool:
                     f"{metadata.checkpoint_version!r}, "
                     f"expected {reference.checkpoint_version!r}"
                 )
-            aligned_max_sample_count = min(
-                aligned_max_sample_count,
-                metadata.max_sample_count,
-            )
-        if aligned_max_sample_count == reference.max_sample_count:
+            max_samples = min(max_samples, metadata.max_sample_count)
+        if max_samples == reference.max_sample_count:
             return reference
-        return replace(reference, max_sample_count=aligned_max_sample_count)
+        return replace(reference, max_sample_count=max_samples)
 
     def post_json(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        """POST one payload, trying untried instances on retryable failures."""
+        """POST payload, trying untried peers on retryable failures."""
         tried: set[str] = set()
         last_error: BaseException | None = None
         while len(tried) < len(self._instances):
-            instance = self._next_untried_instance(tried)
+            instance = self._next_untried(tried)
             tried.add(instance.deployment_id)
             try:
                 return self._transport.post_json(instance.predict_url, payload)
             except Exception as error:
-                if not _should_retry_on_next_instance(error):
+                if not _is_pool_retryable(error):
                     raise
                 last_error = error
-                logger.warning(
-                    "JointFM instance unavailable: deployment_id=%s error=%s",
-                    instance.deployment_id,
-                    error,
-                )
+                _log_unavailable(instance.deployment_id, error)
         assert last_error is not None
         raise last_error
 
-    def _next_untried_instance(self, tried: set[str]) -> JointFMInstanceSettings:
+    def _next_untried(self, tried: set[str]) -> JointFMInstanceSettings:
         for _ in range(len(self._instances)):
             instance = self.next_instance()
             if instance.deployment_id not in tried:
                 return instance
         raise RuntimeError("JointFMInstancePool has no untried instances")
 
-    def _fetch_hosted_health_payload(
-        self,
-        instance: JointFMInstanceSettings,
-    ) -> Mapping[str, Any]:
-        return self._transport.post_json(
-            instance.predict_url,
-            {"request_type": HEALTH_REQUEST_TYPE},
-        )
+
+def _log_unavailable(deployment_id: str, error: BaseException) -> None:
+    logger.warning(
+        "JointFM instance unavailable: deployment_id=%s error=%s",
+        deployment_id,
+        error,
+    )
 
 
-def _should_retry_on_next_instance(error: BaseException) -> bool:
+def _is_pool_retryable(error: BaseException) -> bool:
     if isinstance(error, JointFMRequestError):
         return True
     return (

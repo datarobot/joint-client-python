@@ -67,7 +67,6 @@ class JointFMInstanceSettings:
 
     deployment_id: str
     predict_url: str
-    health_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,22 +533,18 @@ def _load_hosted_deployment_pool_settings(
     deployment_ids = _parse_deployment_ids(
         _required_env(env, environment.deployment_ids)
     )
-    instances_list: list[JointFMInstanceSettings] = []
-    for deployment_id in deployment_ids:
-        predict_url = build_hosted_predict_url(datarobot_endpoint, deployment_id)
-        instances_list.append(
-            JointFMInstanceSettings(
-                deployment_id=deployment_id,
-                predict_url=predict_url,
-                health_url=predict_url,
-            )
+    instances = tuple(
+        JointFMInstanceSettings(
+            deployment_id=deployment_id,
+            predict_url=build_hosted_predict_url(datarobot_endpoint, deployment_id),
         )
-    instances = tuple(instances_list)
+        for deployment_id in deployment_ids
+    )
     primary = instances[0]
     return JointFMSettings(
         datarobot_endpoint=datarobot_endpoint,
         datarobot_api_token=datarobot_api_token,
-        health_url=primary.health_url,
+        health_url=primary.predict_url,
         predict_url=primary.predict_url,
         deployment_selector="deployment_ids",
         schema_version=schema_version,
@@ -564,24 +559,18 @@ def _load_hosted_deployment_pool_settings(
 
 
 def _parse_deployment_ids(value: str) -> tuple[str, ...]:
-    if value.strip() != value:
+    if value.strip() != value or "," not in value:
         raise JointFMConfigurationError(
-            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must not contain leading or trailing whitespace"
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must be a comma-separated list of "
+            "at least two unique deployment IDs"
         )
     deployment_ids: list[str] = []
     seen: set[str] = set()
     for part in value.split(","):
-        if part == "":
+        if part == "" or any(character.isspace() for character in part) or "/" in part:
             raise JointFMConfigurationError(
-                f"{JOINTFM_DEPLOYMENT_IDS_ENV} must not contain empty deployment IDs"
-            )
-        if any(character.isspace() for character in part):
-            raise JointFMConfigurationError(
-                f"{JOINTFM_DEPLOYMENT_IDS_ENV} must not contain whitespace around deployment IDs"
-            )
-        if "/" in part:
-            raise JointFMConfigurationError(
-                f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain deployment IDs, not URLs"
+                f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain non-empty deployment IDs "
+                "without whitespace or URL paths"
             )
         if part in seen:
             continue
@@ -595,17 +584,17 @@ def _parse_deployment_ids(value: str) -> tuple[str, ...]:
 
 
 def _reject_conflicting_selectors_with_deployment_ids(
-    env: Mapping[str, str], environment: EnvironmentVariableConfig
+    env: Mapping[str, str],
+    environment: EnvironmentVariableConfig,
 ) -> None:
-    conflicting_selectors = [
-        selector_name
-        for selector_name in environment.deployment_selector_names()
-        if selector_name in env and env[selector_name] != ""
+    conflicting = [
+        name
+        for name in environment.deployment_selector_names()
+        if name in env and env[name] != ""
     ]
-    if conflicting_selectors:
-        formatted_selectors = ", ".join(conflicting_selectors)
+    if conflicting:
         raise JointFMConfigurationError(
-            f"{JOINTFM_DEPLOYMENT_IDS_ENV} cannot be combined with {formatted_selectors}"
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} cannot be combined with {', '.join(conflicting)}"
         )
 
 
