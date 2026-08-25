@@ -22,6 +22,7 @@ import logging
 import threading
 from typing import Any
 
+from jointfm_client.configuration import DEFAULT_RETRY_STATUS_CODES
 from jointfm_client.contract import (
     HEALTH_REQUEST_TYPE,
     HealthMetadata,
@@ -38,7 +39,9 @@ from jointfm_client.transport import JSONTransport
 
 logger = logging.getLogger(__name__)
 
-_POOL_RETRYABLE_HTTP_STATUS_CODES = frozenset({502, 503, 504})
+# Match the transport's retryable statuses so pool failover covers DR 470
+# (stopped / warming deployment) and other transient codes, not only gateways.
+_POOL_RETRYABLE_HTTP_STATUS_CODES = frozenset(DEFAULT_RETRY_STATUS_CODES)
 
 
 class JointFMInstancePool:

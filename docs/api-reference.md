@@ -119,7 +119,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v1`. |
 | `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
-| `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing. Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`; the SDK uses the minimum `max_sample_count`. |
+| `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing (at least two unique IDs). Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`; the SDK uses the minimum `max_sample_count`. |
 | `JOINTFM_DEPLOYMENT_URL` | One selector | Hosted deployment URL; the SDK derives the `/predictionsUnstructured` route from it and reuses that route for health probes. |
 | `JOINTFM_PREDICT_URL` | One selector | Full hosted prediction URL ending in `/predictionsUnstructured`; the SDK derives the owning deployment URL. |
 | `JOINTFM_DEPLOYMENT_TARGET` | One selector with outputs path | Key in a saved Pulumi outputs JSON file. |

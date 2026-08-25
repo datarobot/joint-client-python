@@ -86,7 +86,7 @@ JOINTFM_SCHEMA_VERSION=v1
 Choose exactly one service selector:
 
 - `JOINTFM_DEPLOYMENT_ID`: builds `DATAROBOT_ENDPOINT.rstrip("/") + "/"` plus `deployments/{deployment_id}/predictionsUnstructured`
-- `JOINTFM_DEPLOYMENT_IDS`: comma-separated hosted deployment IDs for round-robin load balancing. Peers must advertise the same `model_version` and `checkpoint_version`; unavailable peers are logged and skipped. Mutually exclusive with the other selectors.
+- `JOINTFM_DEPLOYMENT_IDS`: comma-separated hosted deployment IDs for round-robin load balancing (at least two unique IDs). Peers must advertise the same `model_version` and `checkpoint_version`; unavailable peers are logged and skipped. Mutually exclusive with the other selectors.
 - `JOINTFM_DEPLOYMENT_URL`: appends `/predictionsUnstructured` to a hosted deployment URL
 - `JOINTFM_PREDICT_URL`: uses a full hosted prediction URL ending in `/predictionsUnstructured`
 - `JOINTFM_DEPLOYMENT_TARGET` with `JOINTFM_PULUMI_OUTPUTS_PATH`: resolves a named target from saved Pulumi outputs JSON, preferring `deployment_id`, then `deployment_url`, then `predict_url`

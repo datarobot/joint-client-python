@@ -509,7 +509,9 @@ def _resolve_single_deployment_selector(
         if selector_name in env and env[selector_name] != ""
     ]
     if len(selector_names) != 1:
-        formatted_selectors = ", ".join(deployment_selector_envs)
+        formatted_selectors = ", ".join(
+            (*deployment_selector_envs, environment.deployment_ids)
+        )
         raise JointFMConfigurationError(
             f"Exactly one deployment selector is required: {formatted_selectors}"
         )
@@ -585,9 +587,9 @@ def _parse_deployment_ids(value: str) -> tuple[str, ...]:
             continue
         seen.add(part)
         deployment_ids.append(part)
-    if not deployment_ids:
+    if len(deployment_ids) < 2:
         raise JointFMConfigurationError(
-            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain at least one deployment ID"
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain at least two unique deployment IDs"
         )
     return tuple(deployment_ids)
 
