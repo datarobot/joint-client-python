@@ -171,7 +171,9 @@ class JointFMClient:
             if not self._should_failover(error):
                 raise
             pinned_model_version = (
-                None if self._health_metadata is None else self._health_metadata.model_version
+                None
+                if self._health_metadata is None
+                else self._health_metadata.model_version
             )
             self._activate_backup()
             metadata = self._probe_health(cache=cache)
@@ -547,7 +549,9 @@ class JointFMClient:
             if not self._should_failover(error):
                 raise
             pinned_model_version = (
-                None if self._health_metadata is None else self._health_metadata.model_version
+                None
+                if self._health_metadata is None
+                else self._health_metadata.model_version
             )
             self._activate_backup()
             metadata = self._probe_health(cache=True)
@@ -570,7 +574,9 @@ class JointFMClient:
 
     def _activate_backup(self) -> None:
         if self.settings is None or self.settings.backup_predict_url is None:
-            raise JointFMConfigurationError("JointFMClient backup deployment is not configured")
+            raise JointFMConfigurationError(
+                "JointFMClient backup deployment is not configured"
+            )
         self.predict_url = self.settings.backup_predict_url
         self.health_url = self.settings.backup_predict_url
         self._using_backup = True
@@ -581,7 +587,8 @@ class JointFMClient:
         self, metadata: HealthMetadata, pinned_model_version: str | None
     ) -> None:
         if (
-            pinned_model_version is not None and metadata.model_version != pinned_model_version
+            pinned_model_version is not None
+            and metadata.model_version != pinned_model_version
         ):
             raise UnsupportedModelVersionError(
                 "Backup JointFM deployment model_version differs from the primary: "

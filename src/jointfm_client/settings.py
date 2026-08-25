@@ -568,7 +568,9 @@ def _optional_backup_deployment(
         raise JointFMConfigurationError(
             f"{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV} must differ from the primary deployment"
         )
-    backup_predict_url = build_hosted_predict_url(datarobot_endpoint, backup_deployment_id)
+    backup_predict_url = build_hosted_predict_url(
+        datarobot_endpoint, backup_deployment_id
+    )
     return backup_deployment_id, backup_predict_url
 
 
