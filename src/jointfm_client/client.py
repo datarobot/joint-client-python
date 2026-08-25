@@ -622,6 +622,10 @@ class JointFMClient:
             assert self._health_metadata is not None
             return self._health_metadata.model_version
 
+        # Pool peers must share checkpoint identity before any traffic.
+        if self._uses_pool() and self._health_metadata is None:
+            self.health(cache=True)
+
         normalized_model_version = validate_jointfm_model_version(
             configured_model_version
         )

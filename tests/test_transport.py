@@ -48,6 +48,7 @@ from jointfm_client import (
     MeanForecastResult,
     SampleForecastResult,
     UnsupportedModelVersionError,
+    UnsupportedServiceContractError,
 )
 
 
@@ -144,7 +145,9 @@ class ErroringSession(requests.Session):
 
 
 def _health_payload(
-    *, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test"
+    *,
+    model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
+    checkpoint_version: str = "sdk-test",
 ) -> dict[str, object]:
     """Health payload."""
     return {
@@ -152,7 +155,7 @@ def _health_payload(
         "schema_version": "v1",
         "image_version": "0.2.0",
         "model_version": model_version,
-        "checkpoint_version": "sdk-test",
+        "checkpoint_version": checkpoint_version,
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
         "head": "studentt",
@@ -1244,4 +1247,64 @@ def test_client_predict_round_robins_across_pool_instances() -> None:
     client.predict(payload)
     client.predict(payload)
 
-    assert transport.urls == [primary, backup]
+    assert transport.urls[:2] == [primary, backup]
+    assert transport.urls[2:] == [primary, backup]
+    assert client._health_metadata is not None
+
+
+def test_client_pool_predict_with_pin_probes_health_before_traffic() -> None:
+    """Client pool predict with pin probes health before traffic."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url=primary,
+        predict_url=primary,
+        deployment_selector="deployment_ids",
+        schema_version="v1",
+        instances=(
+            JointFMInstanceSettings(
+                deployment_id="primary-id",
+                predict_url=primary,
+                health_url=primary,
+            ),
+            JointFMInstanceSettings(
+                deployment_id="backup-id",
+                predict_url=backup,
+                health_url=backup,
+            ),
+        ),
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="primary-id",
+    )
+
+    class MismatchTransport:
+        """Mismatch Transport (test helper)."""
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            if payload.get("request_type") != "health":
+                raise AssertionError("predict must not run before pool health gate")
+            if "primary-id" in url:
+                return _health_payload(checkpoint_version="ckpt-a")
+            return _health_payload(checkpoint_version="ckpt-b")
+
+    client = JointFMClient(settings=settings, transport=MismatchTransport())
+
+    with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
+        client.predict(
+            {
+                "schema_version": "v1",
+                "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+            }
+        )
