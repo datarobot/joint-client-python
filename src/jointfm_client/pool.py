@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from collections.abc import Mapping, Sequence
 import logging
 import threading
@@ -30,6 +31,7 @@ from jointfm_client.exceptions import (
     JointFMHTTPStatusError,
     JointFMRequestError,
     UnsupportedModelVersionError,
+    UnsupportedServiceContractError,
 )
 from jointfm_client.settings import JointFMInstanceSettings
 from jointfm_client.transport import JSONTransport
@@ -40,7 +42,12 @@ _POOL_RETRYABLE_HTTP_STATUS_CODES = frozenset({502, 503, 504})
 
 
 class JointFMInstancePool:
-    """Distributes JointFM requests across multiple hosted deployment instances."""
+    """Distributes JointFM requests across multiple hosted deployment instances.
+
+    Callers should pass a fail-fast transport (``max_attempts=1``). Per-instance
+    transport retries would delay moving to the next peer under outage; this pool
+    retries across instances after logging unavailable ones.
+    """
 
     def __init__(
         self,
@@ -65,7 +72,13 @@ class JointFMInstancePool:
             return instance
 
     def probe_all_health(self) -> HealthMetadata:
-        """Probe instances; log unavailable ones and require matching model_version."""
+        """Probe instances; require matching checkpoint identity across healthy peers.
+
+        Unavailable instances are logged and skipped. Healthy peers must share
+        ``model_version`` and ``checkpoint_version``. The returned metadata uses
+        the minimum ``max_sample_count`` across those peers so sample batching
+        stays within every instance's advertised cap.
+        """
         metadata_by_instance: list[tuple[JointFMInstanceSettings, HealthMetadata]] = []
         last_error: BaseException | None = None
         for instance in self._instances:
@@ -93,6 +106,7 @@ class JointFMInstancePool:
             raise last_error
 
         reference = metadata_by_instance[0][1]
+        aligned_max_sample_count = reference.max_sample_count
         for instance, metadata in metadata_by_instance[1:]:
             if metadata.model_version != reference.model_version:
                 raise UnsupportedModelVersionError(
@@ -100,7 +114,20 @@ class JointFMInstancePool:
                     f"{instance.deployment_id!r} advertises {metadata.model_version!r}, "
                     f"expected {reference.model_version!r}"
                 )
-        return reference
+            if metadata.checkpoint_version != reference.checkpoint_version:
+                raise UnsupportedServiceContractError(
+                    "JointFM deployment pool checkpoint_version mismatch: "
+                    f"{instance.deployment_id!r} advertises "
+                    f"{metadata.checkpoint_version!r}, "
+                    f"expected {reference.checkpoint_version!r}"
+                )
+            aligned_max_sample_count = min(
+                aligned_max_sample_count,
+                metadata.max_sample_count,
+            )
+        if aligned_max_sample_count == reference.max_sample_count:
+            return reference
+        return replace(reference, max_sample_count=aligned_max_sample_count)
 
     def post_json(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """POST one payload, trying untried instances on retryable failures."""

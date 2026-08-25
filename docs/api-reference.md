@@ -34,7 +34,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 
 | Name | Purpose |
 | --- | --- |
-| `JointFMSettings` | Validated hosted or local service settings: optional normalized DataRobot endpoint, optional secret token, health and prediction URLs, service selector, schema pin, model pin, and optional selector details. The API token is excluded from `repr`. |
+| `JointFMSettings` | Validated hosted or local service settings: optional normalized DataRobot endpoint, optional secret token, health and prediction URLs, service selector, schema pin, optional load-balanced `instances` pool, model pin, and optional selector details. The API token is excluded from `repr`. |
 | `JointFMConfig` | Top-level structured configuration loaded from defaults, YAML, and explicit overrides. |
 | `PathConfig` | Default local file names for `config.yaml`, `config.sample.yaml`, and `.env`. |
 | `EnvironmentVariableConfig` | Environment variable names consumed by settings loading. |
@@ -119,6 +119,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v1`. |
 | `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
+| `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing. Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`; the SDK uses the minimum `max_sample_count`. |
 | `JOINTFM_DEPLOYMENT_URL` | One selector | Hosted deployment URL; the SDK derives the `/predictionsUnstructured` route from it and reuses that route for health probes. |
 | `JOINTFM_PREDICT_URL` | One selector | Full hosted prediction URL ending in `/predictionsUnstructured`; the SDK derives the owning deployment URL. |
 | `JOINTFM_DEPLOYMENT_TARGET` | One selector with outputs path | Key in a saved Pulumi outputs JSON file. |
@@ -126,7 +127,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JOINTFM_LOCAL_BASE_URL` | One selector | Direct local JointFM REST service base URL. The SDK calls `GET /healthz` and `POST /predict` without DataRobot authorization. |
 | `DATAROBOT_DEPLOYMENT_ID` | Optional live tests | Hosted deployment ID used only by the optional live smoke test so normal CI does not call DataRobot accidentally. |
 
-Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, `JOINTFM_DEPLOYMENT_TARGET`, and `JOINTFM_LOCAL_BASE_URL`.
+Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_IDS`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, `JOINTFM_DEPLOYMENT_TARGET`, and `JOINTFM_LOCAL_BASE_URL`.
 
 ## V1 Payload Fields
 

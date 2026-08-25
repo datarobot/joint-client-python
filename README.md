@@ -38,7 +38,7 @@ The direct local service exposes `GET /healthz` and `POST /predict`.
 
 Structured SDK defaults live in `jointfm_client.configuration.JointFMConfig` and are mirrored in the checked-in `config.sample.yaml`. Copy `config.sample.yaml` to `config.yaml` and change only the fields needed for your deployment or transport defaults. `JointFMClient.from_env()` and `load_settings()` read `config.yaml` by default, then layer `.env` values over it, then layer process environment variables or the supplied `env` mapping over both. Explicit Python arguments such as `timeout=` and `retry_config=` still override YAML transport defaults.
 
-`JointFMClient.from_env()` and `load_settings()` resolve `JOINTFM_SCHEMA_VERSION` and exactly one service selector from that layered configuration. `JOINTFM_MODEL_VERSION` is optional: when unset the SDK discovers the model version from `/healthz` on first use, and when set the SDK validates it against `/healthz` as a drift-detection guard. Hosted selectors also require `DATAROBOT_ENDPOINT` and `DATAROBOT_API_TOKEN`; the direct local selector does not use DataRobot credentials. Missing credentials, missing schema version, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
+`JointFMClient.from_env()` and `load_settings()` resolve `JOINTFM_SCHEMA_VERSION` and exactly one service selector from that layered configuration. Use either a single-target selector (`JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, `JOINTFM_DEPLOYMENT_TARGET`, or `JOINTFM_LOCAL_BASE_URL`) or the load-balanced hosted selector `JOINTFM_DEPLOYMENT_IDS` (comma-separated deployment IDs of the same checkpoint). `JOINTFM_DEPLOYMENT_IDS` cannot be combined with another selector. `JOINTFM_MODEL_VERSION` is optional: when unset the SDK discovers the model version from `/healthz` on first use, and when set the SDK validates it against `/healthz` as a drift-detection guard. Hosted selectors also require `DATAROBOT_ENDPOINT` and `DATAROBOT_API_TOKEN`; the direct local selector does not use DataRobot credentials. Missing credentials, missing schema version, malformed credentials, unsupported schema versions, missing selectors, and multiple selectors raise `JointFMConfigurationError`.
 
 `DATAROBOT_ENDPOINT` must be a normalized HTTPS DataRobot API v2 URL ending in `/api/v2`; the SDK stores it without a trailing slash. `DATAROBOT_API_TOKEN` must be non-empty and whitespace-free. The token is excluded from `JointFMSettings` repr output.
 
@@ -86,10 +86,20 @@ JOINTFM_SCHEMA_VERSION=v1
 Choose exactly one service selector:
 
 - `JOINTFM_DEPLOYMENT_ID`: builds `DATAROBOT_ENDPOINT.rstrip("/") + "/"` plus `deployments/{deployment_id}/predictionsUnstructured`
+- `JOINTFM_DEPLOYMENT_IDS`: comma-separated hosted deployment IDs for round-robin load balancing. Peers must advertise the same `model_version` and `checkpoint_version`; unavailable peers are logged and skipped. Mutually exclusive with the other selectors.
 - `JOINTFM_DEPLOYMENT_URL`: appends `/predictionsUnstructured` to a hosted deployment URL
 - `JOINTFM_PREDICT_URL`: uses a full hosted prediction URL ending in `/predictionsUnstructured`
 - `JOINTFM_DEPLOYMENT_TARGET` with `JOINTFM_PULUMI_OUTPUTS_PATH`: resolves a named target from saved Pulumi outputs JSON, preferring `deployment_id`, then `deployment_url`, then `predict_url`
 - `JOINTFM_LOCAL_BASE_URL`: builds direct local `GET /healthz` and `POST /predict` URLs without DataRobot authentication
+
+Load-balanced hosted example:
+
+```dotenv
+DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
+DATAROBOT_API_TOKEN=<token>
+JOINTFM_SCHEMA_VERSION=v1
+JOINTFM_DEPLOYMENT_IDS=chevron-id,research-id
+```
 
 Pulumi deployment discovery is explicit and file-backed. Export stack outputs to a JSON object keyed by target name, then set `JOINTFM_DEPLOYMENT_TARGET` to the key and `JOINTFM_PULUMI_OUTPUTS_PATH` to that JSON file:
 
@@ -238,13 +248,15 @@ uv run python -c "import jointfm_client; print(jointfm_client.__version__)"
 
 ### Configure A Deployment
 
-Create `.env` from `.env.sample` or set the same values in your shell. A hosted forecast needs the DataRobot API v2 endpoint, token, schema pin, and exactly one deployment selector:
+Create `.env` from `.env.sample` or set the same values in your shell. A hosted forecast needs the DataRobot API v2 endpoint, token, schema pin, and exactly one deployment selector (`JOINTFM_DEPLOYMENT_ID` or `JOINTFM_DEPLOYMENT_IDS`, among the other selectors listed above):
 
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
 JOINTFM_SCHEMA_VERSION=v1
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
+# Or load-balance same-checkpoint peers:
+# JOINTFM_DEPLOYMENT_IDS=chevron-id,research-id
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
 # JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
 ```

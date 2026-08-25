@@ -156,8 +156,10 @@ class JointFMClient:
         validation and returns the same typed health payload.
 
         When multiple hosted deployments are configured via
-        ``JOINTFM_DEPLOYMENT_IDS``, every instance is probed and must advertise
-        the same ``model_version``.
+        ``JOINTFM_DEPLOYMENT_IDS``, every reachable instance is probed and must
+        advertise the same ``model_version`` and ``checkpoint_version``. The
+        cached sample-batch cap is the minimum ``max_sample_count`` across those
+        peers.
         """
         if cache and not refresh and self._health_metadata is not None:
             return self._health_metadata
@@ -545,9 +547,23 @@ class JointFMClient:
             )
         if self._pool is None:
             assert self.settings is not None
+            # Per-instance transport retries would delay moving to the next peer
+            # under outage; the pool itself retries across instances.
+            if self._transport is None:
+                pool_transport: JSONTransport = JointFMHTTPTransport.from_settings(
+                    self.settings,
+                    timeout=self._timeout,
+                    retry_config=JointFMRetryConfig(max_attempts=1),
+                    response_body_excerpt_characters=(
+                        self._response_body_excerpt_characters
+                    ),
+                    datarobot_request_id_headers=self._datarobot_request_id_headers,
+                )
+            else:
+                pool_transport = self._transport
             self._pool = JointFMInstancePool(
                 instances=self.settings.instances,
-                transport=self._transport_for_request(),
+                transport=pool_transport,
                 expected_model_version=self.settings.model_version,
             )
         return self._pool
