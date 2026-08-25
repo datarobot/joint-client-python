@@ -54,6 +54,7 @@ class EnvironmentVariableConfig(_ConfigModel):
     datarobot_endpoint: str = "DATAROBOT_ENDPOINT"
     datarobot_api_token: str = "DATAROBOT_API_TOKEN"
     deployment_id: str = "JOINTFM_DEPLOYMENT_ID"
+    deployment_ids: str = "JOINTFM_DEPLOYMENT_IDS"
     deployment_url: str = "JOINTFM_DEPLOYMENT_URL"
     predict_url: str = "JOINTFM_PREDICT_URL"
     deployment_target: str = "JOINTFM_DEPLOYMENT_TARGET"
@@ -92,6 +93,7 @@ class HostedDeploymentConfig(_ConfigModel):
     datarobot_endpoint: str | None = None
     datarobot_api_token: str | None = Field(default=None, repr=False)
     deployment_id: str | None = None
+    deployment_ids: str | None = None
     deployment_url: str | None = None
     predict_url: str | None = None
     deployment_target: str | None = None
@@ -113,6 +115,7 @@ class HostedDeploymentConfig(_ConfigModel):
             values, environment.datarobot_api_token, self.datarobot_api_token
         )
         _set_if_configured(values, environment.deployment_id, self.deployment_id)
+        _set_if_configured(values, environment.deployment_ids, self.deployment_ids)
         _set_if_configured(values, environment.deployment_url, self.deployment_url)
         _set_if_configured(values, environment.predict_url, self.predict_url)
         _set_if_configured(
@@ -355,6 +358,7 @@ DEFAULT_ENVIRONMENT_CONFIG: Final = EnvironmentVariableConfig()
 DATAROBOT_ENDPOINT_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.datarobot_endpoint
 DATAROBOT_API_TOKEN_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.datarobot_api_token
 JOINTFM_DEPLOYMENT_ID_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_id
+JOINTFM_DEPLOYMENT_IDS_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_ids
 JOINTFM_DEPLOYMENT_URL_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_url
 JOINTFM_PREDICT_URL_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.predict_url
 JOINTFM_DEPLOYMENT_TARGET_ENV: Final = DEFAULT_ENVIRONMENT_CONFIG.deployment_target
@@ -433,6 +437,7 @@ __all__ = [
     "ForecastCsvConfig",
     "HostedDeploymentConfig",
     "JOINTFM_DEPLOYMENT_ID_ENV",
+    "JOINTFM_DEPLOYMENT_IDS_ENV",
     "JOINTFM_DEPLOYMENT_TARGET_ENV",
     "JOINTFM_DEPLOYMENT_URL_ENV",
     "JOINTFM_LOCAL_BASE_URL_ENV",

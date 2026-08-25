@@ -57,6 +57,7 @@ from jointfm_client.contract import (
     QuantileForecastResult,
     SampleForecastResult,
 )
+from jointfm_client.pool import JointFMInstancePool
 from jointfm_client.settings import (
     JointFMSettings,
     load_settings,
@@ -108,6 +109,7 @@ class JointFMClient:
         self._datarobot_request_id_headers = datarobot_request_id_headers
         self._health_metadata: HealthMetadata | None = None
         self._sample_batch_cap: int | None = None
+        self._pool: JointFMInstancePool | None = None
 
     @classmethod
     def from_env(
@@ -152,9 +154,20 @@ class JointFMClient:
         deployment gateway only proxies the unstructured prediction route; the
         container short-circuits that body before any schema or model version
         validation and returns the same typed health payload.
+
+        When multiple hosted deployments are configured via
+        ``JOINTFM_DEPLOYMENT_IDS``, every instance is probed and must advertise
+        the same ``model_version``.
         """
         if cache and not refresh and self._health_metadata is not None:
             return self._health_metadata
+
+        if self._uses_pool():
+            metadata = self._require_pool().probe_all_health()
+            self._sample_batch_cap = metadata.max_sample_count
+            if cache:
+                self._health_metadata = metadata
+            return metadata
 
         if self._uses_predict_route_for_health():
             payload = self._fetch_hosted_health_payload()
@@ -195,14 +208,14 @@ class JointFMClient:
 
     def predict(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """Submit one V1 JSON prediction payload to the configured endpoint."""
-        predict_url = self._require_predict_url("predict")
+        self._require_predict_url("predict")
         model_version = payload.get("model_version")
         if not isinstance(model_version, str):
             raise JointFMConfigurationError(
                 "JointFMClient.predict() requires payload['model_version']"
             )
         self._resolve_model_version(model_version=model_version)
-        response_payload = self._transport_for_request().post_json(predict_url, payload)
+        response_payload = self._post_predict_json(payload)
         ForecastResponse.raise_for_errors(response_payload)
         return response_payload
 
@@ -243,7 +256,7 @@ class JointFMClient:
         | None = None,
     ) -> ForecastResponse:
         """Build and submit a forecast request from tabular history inputs."""
-        predict_url = self._require_predict_url("forecast")
+        self._require_predict_url("forecast")
         resolved_model_version = self._resolve_model_version(
             model_version=model_version,
         )
@@ -303,18 +316,16 @@ class JointFMClient:
             )
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
-            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+            return self._forecast_sample_batches(payload, sample_cap)
 
         try:
-            response_payload = self._transport_for_request().post_json(
-                predict_url, payload
-            )
+            response_payload = self._post_predict_json(payload)
         except JointFMHTTPStatusError as error:
             sample_cap = _sample_batch_cap_from_error(error, payload)
             if sample_cap is None:
                 raise
             self._sample_batch_cap = sample_cap
-            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+            return self._forecast_sample_batches(payload, sample_cap)
 
         return _forecast_response_from_payload(response_payload, payload)
 
@@ -484,7 +495,6 @@ class JointFMClient:
 
     def _forecast_sample_batches(
         self,
-        predict_url: str,
         payload: Mapping[str, Any],
         sample_cap: int,
     ) -> SampleForecastResult:
@@ -498,10 +508,7 @@ class JointFMClient:
             batch_payload = dict(payload)
             batch_payload["n_samples"] = batch_samples
             _set_batch_seed(batch_payload, batch_index)
-            response_payload = self._transport_for_request().post_json(
-                predict_url,
-                batch_payload,
-            )
+            response_payload = self._post_predict_json(batch_payload)
             batch_result = _forecast_response_from_payload(
                 response_payload,
                 batch_payload,
@@ -521,6 +528,29 @@ class JointFMClient:
             raise JointFMServiceError(
                 f"JointFM forecast response violated the V1 contract: {error}"
             ) from error
+
+    def _post_predict_json(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        if self._uses_pool():
+            return self._require_pool().post_json(payload)
+        predict_url = self._require_predict_url("predict")
+        return self._transport_for_request().post_json(predict_url, payload)
+
+    def _uses_pool(self) -> bool:
+        return self.settings is not None and len(self.settings.instances) > 1
+
+    def _require_pool(self) -> JointFMInstancePool:
+        if not self._uses_pool():
+            raise JointFMConfigurationError(
+                "JointFMClient pool routing requires multiple deployment instances"
+            )
+        if self._pool is None:
+            assert self.settings is not None
+            self._pool = JointFMInstancePool(
+                instances=self.settings.instances,
+                transport=self._transport_for_request(),
+                expected_model_version=self.settings.model_version,
+            )
+        return self._pool
 
     def _require_settings(self, method_name: str) -> JointFMSettings:
         if self.settings is None:
