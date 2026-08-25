@@ -31,6 +31,7 @@ from jointfm_client.configuration import (
     DATAROBOT_ENDPOINT_ENV,
     DEFAULT_CONFIG_PATH,
     EnvironmentVariableConfig,
+    JOINTFM_BACKUP_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
@@ -74,6 +75,8 @@ class JointFMSettings:
     deployment_url: str | None = None
     deployment_target: str | None = None
     local_base_url: str | None = None
+    backup_deployment_id: str | None = None
+    backup_predict_url: str | None = None
 
 
 def load_settings(
@@ -102,6 +105,7 @@ def load_settings(
         local_base_url = normalize_local_service_base_url(
             _required_env(env_values, environment.local_base_url)
         )
+        _reject_backup_for_local_service(env_values, environment)
         return JointFMSettings(
             datarobot_endpoint=None,
             datarobot_api_token=None,
@@ -126,6 +130,12 @@ def load_settings(
         )
         deployment_url = build_hosted_deployment_url(datarobot_endpoint, deployment_id)
         predict_url = build_hosted_predict_url(datarobot_endpoint, deployment_id)
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -136,6 +146,8 @@ def load_settings(
             model_version=model_version,
             deployment_id=deployment_id,
             deployment_url=deployment_url,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     if selector_name == environment.deployment_url:
@@ -144,6 +156,12 @@ def load_settings(
         )
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url_from_deployment_url(deployment_url)
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -154,6 +172,8 @@ def load_settings(
             model_version=model_version,
             deployment_id=deployment_id,
             deployment_url=deployment_url,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     if selector_name == environment.predict_url:
@@ -162,6 +182,12 @@ def load_settings(
         )
         deployment_url = deployment_url_from_hosted_predict_url(predict_url)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -172,6 +198,8 @@ def load_settings(
             model_version=model_version,
             deployment_id=deployment_id,
             deployment_url=deployment_url,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     deployment_target = _required_env(env_values, environment.deployment_target)
@@ -188,6 +216,12 @@ def load_settings(
             datarobot_endpoint,
             normalized_deployment_id,
         )
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=normalized_deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -199,6 +233,8 @@ def load_settings(
             deployment_id=normalized_deployment_id,
             deployment_url=deployment_url,
             deployment_target=deployment_target,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     deployment_url_output = _optional_string_output(target_outputs, "deployment_url")
@@ -206,6 +242,12 @@ def load_settings(
         deployment_url = normalize_hosted_deployment_url(deployment_url_output)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
         predict_url = build_hosted_predict_url_from_deployment_url(deployment_url)
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -217,6 +259,8 @@ def load_settings(
             deployment_id=deployment_id,
             deployment_url=deployment_url,
             deployment_target=deployment_target,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     predict_url_output = _optional_string_output(target_outputs, "predict_url")
@@ -224,6 +268,12 @@ def load_settings(
         predict_url = normalize_hosted_predict_url(predict_url_output)
         deployment_url = deployment_url_from_hosted_predict_url(predict_url)
         deployment_id = deployment_id_from_hosted_deployment_url(deployment_url)
+        backup_deployment_id, backup_predict_url = _optional_backup_deployment(
+            env_values,
+            environment,
+            datarobot_endpoint=datarobot_endpoint,
+            primary_deployment_id=deployment_id,
+        )
         return JointFMSettings(
             datarobot_endpoint=datarobot_endpoint,
             datarobot_api_token=datarobot_api_token,
@@ -235,6 +285,8 @@ def load_settings(
             deployment_id=deployment_id,
             deployment_url=deployment_url,
             deployment_target=deployment_target,
+            backup_deployment_id=backup_deployment_id,
+            backup_predict_url=backup_predict_url,
         )
 
     raise JointFMConfigurationError(
@@ -492,6 +544,43 @@ def _resolve_single_deployment_selector(
             f"Exactly one deployment selector is required: {formatted_selectors}"
         )
     return selector_names[0]
+
+
+def _optional_backup_deployment(
+    env: Mapping[str, str],
+    environment: EnvironmentVariableConfig,
+    *,
+    datarobot_endpoint: str,
+    primary_deployment_id: str,
+) -> tuple[str | None, str | None]:
+    """Return backup deployment identity when JOINTFM_BACKUP_DEPLOYMENT_ID is set."""
+    value = env.get(environment.backup_deployment_id)
+    if value is None or value == "":
+        return None, None
+    backup_deployment_id = _normalize_non_whitespace_string(
+        value, JOINTFM_BACKUP_DEPLOYMENT_ID_ENV
+    )
+    if "/" in backup_deployment_id:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV} must be a deployment ID, not a URL"
+        )
+    if backup_deployment_id == primary_deployment_id:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV} must differ from the primary deployment"
+        )
+    backup_predict_url = build_hosted_predict_url(datarobot_endpoint, backup_deployment_id)
+    return backup_deployment_id, backup_predict_url
+
+
+def _reject_backup_for_local_service(
+    env: Mapping[str, str], environment: EnvironmentVariableConfig
+) -> None:
+    value = env.get(environment.backup_deployment_id)
+    if value is None or value == "":
+        return
+    raise JointFMConfigurationError(
+        f"{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV} requires a hosted DataRobot deployment"
+    )
 
 
 def _load_pulumi_target_outputs(

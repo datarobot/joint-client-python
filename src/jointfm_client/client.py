@@ -47,6 +47,7 @@ from jointfm_client.contract import (
 from jointfm_client.exceptions import (
     JointFMConfigurationError,
     JointFMHTTPStatusError,
+    JointFMRequestError,
     JointFMServiceError,
     UnsupportedModelVersionError,
 )
@@ -73,6 +74,7 @@ _SAMPLE_CAP_ERROR_PATTERN = re.compile(
     r"n_samples exceeds the configured container cap:\s*"
     r"requested\s+(?P<requested>[0-9]+),\s*max\s+(?P<cap>[0-9]+)"
 )
+_FAILOVER_HTTP_STATUS_CODES = frozenset({502, 503, 504})
 
 
 class JointFMClient:
@@ -108,6 +110,7 @@ class JointFMClient:
         self._datarobot_request_id_headers = datarobot_request_id_headers
         self._health_metadata: HealthMetadata | None = None
         self._sample_batch_cap: int | None = None
+        self._using_backup = False
 
     @classmethod
     def from_env(
@@ -152,10 +155,30 @@ class JointFMClient:
         deployment gateway only proxies the unstructured prediction route; the
         container short-circuits that body before any schema or model version
         validation and returns the same typed health payload.
+
+        When ``JOINTFM_BACKUP_DEPLOYMENT_ID`` is configured and the primary probe
+        fails with a transport or gateway error, the client switches to the backup
+        deployment for the rest of its lifetime, but only when the backup advertises
+        the same ``model_version`` already pinned for this client (or any version on
+        the first successful probe).
         """
         if cache and not refresh and self._health_metadata is not None:
             return self._health_metadata
 
+        try:
+            return self._probe_health(cache=cache)
+        except Exception as error:
+            if not self._should_failover(error):
+                raise
+            pinned_model_version = (
+                None if self._health_metadata is None else self._health_metadata.model_version
+            )
+            self._activate_backup()
+            metadata = self._probe_health(cache=cache)
+            self._ensure_backup_model_version(metadata, pinned_model_version)
+            return metadata
+
+    def _probe_health(self, *, cache: bool) -> HealthMetadata:
         if self._uses_predict_route_for_health():
             payload = self._fetch_hosted_health_payload()
         else:
@@ -195,14 +218,14 @@ class JointFMClient:
 
     def predict(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """Submit one V1 JSON prediction payload to the configured endpoint."""
-        predict_url = self._require_predict_url("predict")
+        self._require_predict_url("predict")
         model_version = payload.get("model_version")
         if not isinstance(model_version, str):
             raise JointFMConfigurationError(
                 "JointFMClient.predict() requires payload['model_version']"
             )
         self._resolve_model_version(model_version=model_version)
-        response_payload = self._transport_for_request().post_json(predict_url, payload)
+        response_payload = self._post_predict_json(payload)
         ForecastResponse.raise_for_errors(response_payload)
         return response_payload
 
@@ -243,7 +266,7 @@ class JointFMClient:
         | None = None,
     ) -> ForecastResponse:
         """Build and submit a forecast request from tabular history inputs."""
-        predict_url = self._require_predict_url("forecast")
+        self._require_predict_url("forecast")
         resolved_model_version = self._resolve_model_version(
             model_version=model_version,
         )
@@ -303,18 +326,16 @@ class JointFMClient:
             )
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
-            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+            return self._forecast_sample_batches(payload, sample_cap)
 
         try:
-            response_payload = self._transport_for_request().post_json(
-                predict_url, payload
-            )
+            response_payload = self._post_predict_json(payload)
         except JointFMHTTPStatusError as error:
             sample_cap = _sample_batch_cap_from_error(error, payload)
             if sample_cap is None:
                 raise
             self._sample_batch_cap = sample_cap
-            return self._forecast_sample_batches(predict_url, payload, sample_cap)
+            return self._forecast_sample_batches(payload, sample_cap)
 
         return _forecast_response_from_payload(response_payload, payload)
 
@@ -484,7 +505,6 @@ class JointFMClient:
 
     def _forecast_sample_batches(
         self,
-        predict_url: str,
         payload: Mapping[str, Any],
         sample_cap: int,
     ) -> SampleForecastResult:
@@ -498,10 +518,7 @@ class JointFMClient:
             batch_payload = dict(payload)
             batch_payload["n_samples"] = batch_samples
             _set_batch_seed(batch_payload, batch_index)
-            response_payload = self._transport_for_request().post_json(
-                predict_url,
-                batch_payload,
-            )
+            response_payload = self._post_predict_json(batch_payload)
             batch_result = _forecast_response_from_payload(
                 response_payload,
                 batch_payload,
@@ -521,6 +538,55 @@ class JointFMClient:
             raise JointFMServiceError(
                 f"JointFM forecast response violated the V1 contract: {error}"
             ) from error
+
+    def _post_predict_json(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        predict_url = self._require_predict_url("predict")
+        try:
+            return self._transport_for_request().post_json(predict_url, payload)
+        except Exception as error:
+            if not self._should_failover(error):
+                raise
+            pinned_model_version = (
+                None if self._health_metadata is None else self._health_metadata.model_version
+            )
+            self._activate_backup()
+            metadata = self._probe_health(cache=True)
+            self._ensure_backup_model_version(metadata, pinned_model_version)
+            return self._transport_for_request().post_json(
+                self._require_predict_url("predict"), payload
+            )
+
+    def _should_failover(self, error: BaseException) -> bool:
+        if self._using_backup:
+            return False
+        if self.settings is None or self.settings.backup_predict_url is None:
+            return False
+        if isinstance(error, JointFMRequestError):
+            return True
+        return (
+            isinstance(error, JointFMHTTPStatusError)
+            and error.status_code in _FAILOVER_HTTP_STATUS_CODES
+        )
+
+    def _activate_backup(self) -> None:
+        if self.settings is None or self.settings.backup_predict_url is None:
+            raise JointFMConfigurationError("JointFMClient backup deployment is not configured")
+        self.predict_url = self.settings.backup_predict_url
+        self.health_url = self.settings.backup_predict_url
+        self._using_backup = True
+        self._health_metadata = None
+        self._sample_batch_cap = None
+
+    def _ensure_backup_model_version(
+        self, metadata: HealthMetadata, pinned_model_version: str | None
+    ) -> None:
+        if (
+            pinned_model_version is not None and metadata.model_version != pinned_model_version
+        ):
+            raise UnsupportedModelVersionError(
+                "Backup JointFM deployment model_version differs from the primary: "
+                f"expected {pinned_model_version!r}, got {metadata.model_version!r}"
+            )
 
     def _require_settings(self, method_name: str) -> JointFMSettings:
         if self.settings is None:

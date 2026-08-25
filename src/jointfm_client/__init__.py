@@ -107,6 +107,7 @@ from jointfm_client.notebooks import (
 from jointfm_client.settings import (
     DATAROBOT_API_TOKEN_ENV,
     DATAROBOT_ENDPOINT_ENV,
+    JOINTFM_BACKUP_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
@@ -169,6 +170,7 @@ __all__ = [
     "HostedDeploymentConfig",
     "IMPORT_NAMESPACE",
     "MeanForecastResult",
+    "JOINTFM_BACKUP_DEPLOYMENT_ID_ENV",
     "JOINTFM_DEPLOYMENT_ID_ENV",
     "JOINTFM_DEPLOYMENT_TARGET_ENV",
     "JOINTFM_DEPLOYMENT_URL_ENV",
