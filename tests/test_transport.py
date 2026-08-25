@@ -1086,6 +1086,156 @@ def test_client_forecast_requires_model_version_without_settings_or_health() -> 
         )
 
 
+def _failover_settings() -> JointFMSettings:
+    """Hosted settings with a backup deployment for failover tests."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    return JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url=primary,
+        predict_url=primary,
+        deployment_selector="deployment_id",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="primary-id",
+        backup_deployment_id="backup-id",
+        backup_predict_url=backup,
+    )
+
+
+class FailoverTransport:
+    """Transport that fails the primary URL and serves the backup."""
+
+    def __init__(
+        self,
+        *,
+        backup_model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
+        fail_primary_health: bool = False,
+        fail_primary_predict: bool = False,
+    ) -> None:
+        self.backup_model_version = backup_model_version
+        self.fail_primary_health = fail_primary_health
+        self.fail_primary_predict = fail_primary_predict
+        self.urls: list[str] = []
+        self.post_count = 0
+
+    def get_json(self, url: str) -> Mapping[str, Any]:
+        """Get json."""
+        raise AssertionError("hosted health must POST to the predict URL")
+
+    def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Post json."""
+        self.post_count += 1
+        self.urls.append(url)
+        is_primary = "primary-id" in url
+        if payload.get("request_type") == "health":
+            if is_primary and self.fail_primary_health:
+                raise JointFMRequestError("primary unreachable")
+            model_version = (
+                "jointfm-inference:0.2.0+ckpt.sdk-test"
+                if is_primary
+                else self.backup_model_version
+            )
+            return _health_payload(model_version=model_version)
+        if is_primary and self.fail_primary_predict:
+            raise JointFMHTTPStatusError(
+                "primary unavailable",
+                status_code=503,
+                response_body_excerpt="unavailable",
+            )
+        return _forecast_response_payload()
+
+
+def test_client_health_uses_primary_without_calling_backup() -> None:
+    """Client health uses primary without calling backup."""
+    transport = FailoverTransport()
+    client = JointFMClient(settings=_failover_settings(), transport=transport)
+
+    metadata = client.health(cache=True)
+
+    assert metadata.model_version == "jointfm-inference:0.2.0+ckpt.sdk-test"
+    assert transport.urls == [_failover_settings().predict_url]
+    assert client._using_backup is False
+
+
+def test_client_health_fails_over_to_backup_on_primary_transport_error() -> None:
+    """Client health fails over to backup on primary transport error."""
+    transport = FailoverTransport(fail_primary_health=True)
+    client = JointFMClient(settings=_failover_settings(), transport=transport)
+
+    metadata = client.health(cache=True)
+
+    assert metadata.model_version == "jointfm-inference:0.2.0+ckpt.sdk-test"
+    assert client._using_backup is True
+    assert client.predict_url == _failover_settings().backup_predict_url
+    assert transport.urls == [
+        _failover_settings().predict_url,
+        _failover_settings().backup_predict_url,
+    ]
+
+
+def test_client_predict_fails_over_once_and_stays_on_backup() -> None:
+    """Client predict fails over once and stays on backup."""
+    transport = FailoverTransport(fail_primary_predict=True)
+    client = JointFMClient(settings=_failover_settings(), transport=transport)
+    client.health(cache=True)
+    payload = {
+        "schema_version": "v1",
+        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+    }
+
+    first = client.predict(payload)
+    second = client.predict(payload)
+
+    assert first == _forecast_response_payload()
+    assert second == _forecast_response_payload()
+    assert client._using_backup is True
+    assert transport.urls == [
+        _failover_settings().predict_url,
+        _failover_settings().predict_url,
+        _failover_settings().backup_predict_url,
+        _failover_settings().backup_predict_url,
+        _failover_settings().backup_predict_url,
+    ]
+
+
+def test_client_failover_rejects_backup_with_different_model_version() -> None:
+    """Client failover rejects backup with different model version."""
+    settings = _failover_settings()
+    settings = JointFMSettings(
+        datarobot_endpoint=settings.datarobot_endpoint,
+        datarobot_api_token=settings.datarobot_api_token,
+        health_url=settings.health_url,
+        predict_url=settings.predict_url,
+        deployment_selector=settings.deployment_selector,
+        schema_version=settings.schema_version,
+        model_version=None,
+        deployment_id=settings.deployment_id,
+        backup_deployment_id=settings.backup_deployment_id,
+        backup_predict_url=settings.backup_predict_url,
+    )
+    transport = FailoverTransport(
+        fail_primary_predict=True,
+        backup_model_version="jointfm-inference:9.9.9+ckpt.other",
+    )
+    client = JointFMClient(settings=settings, transport=transport)
+    client.health(cache=True)
+
+    with pytest.raises(UnsupportedModelVersionError, match="Backup"):
+        client.predict(
+            {
+                "schema_version": "v1",
+                "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+            }
+        )
+
+
 def _start_json_server(
     statuses: list[HTTPStatus],
     *,

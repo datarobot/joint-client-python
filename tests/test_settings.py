@@ -21,6 +21,7 @@ import pytest
 from jointfm_client import (
     DATAROBOT_API_TOKEN_ENV,
     DATAROBOT_ENDPOINT_ENV,
+    JOINTFM_BACKUP_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_ID_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
@@ -73,7 +74,45 @@ def test_load_settings_from_environment_with_deployment_id_builds_hosted_url() -
         "deployment-id/predictionsUnstructured"
     )
     assert settings.health_url == settings.predict_url
+    assert settings.backup_deployment_id is None
+    assert settings.backup_predict_url is None
     assert "secret-token" not in repr(settings)
+
+
+def test_load_settings_with_backup_deployment_id_builds_backup_predict_url() -> None:
+    """Load settings with backup deployment id builds backup predict url."""
+    settings = load_settings(
+        env=_hosted_env(**{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV: "backup-deployment-id"}),
+        dotenv_path=None,
+    )
+
+    assert settings.backup_deployment_id == "backup-deployment-id"
+    assert settings.backup_predict_url == (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "backup-deployment-id/predictionsUnstructured"
+    )
+
+
+def test_load_settings_rejects_backup_equal_to_primary_deployment() -> None:
+    """Load settings rejects backup equal to primary deployment."""
+    with pytest.raises(JointFMConfigurationError, match="must differ"):
+        load_settings(
+            env=_hosted_env(**{JOINTFM_BACKUP_DEPLOYMENT_ID_ENV: "deployment-id"}),
+            dotenv_path=None,
+        )
+
+
+def test_load_settings_rejects_backup_with_local_service() -> None:
+    """Load settings rejects backup with local service."""
+    with pytest.raises(JointFMConfigurationError, match="hosted DataRobot"):
+        load_settings(
+            env={
+                JOINTFM_LOCAL_BASE_URL_ENV: "http://127.0.0.1:8080/",
+                JOINTFM_SCHEMA_VERSION_ENV: "v1",
+                JOINTFM_BACKUP_DEPLOYMENT_ID_ENV: "backup-deployment-id",
+            },
+            dotenv_path=None,
+        )
 
 
 def test_load_settings_with_local_service_base_url_builds_direct_urls() -> None:
