@@ -229,6 +229,21 @@ def test_pool_health_routes_only_reachable_peers() -> None:
     assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "b"
 
 
+def test_pool_failover_retries_health_excluded_peer() -> None:
+    """When the last health-active peer fails, failover retries a recovered peer."""
+    transport = _Transport(
+        health_by_id={"b": _health()},
+        fail_ids=frozenset({"a"}),
+    )
+    pool = _pool(transport=transport)
+    pool.probe_all_health()
+    assert pool.instance_at(0).deployment_id == "b"
+
+    transport.fail_ids = frozenset({"b"})
+    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "a"
+    assert pool.instance_at(0).deployment_id == "a"
+
+
 def test_pool_health_skips_incompatible_peer_when_another_matches_pin() -> None:
     """A pinned-incompatible backup is skipped; the matching primary stays usable."""
     pinned = "jointfm-inference:0.2.0+ckpt.sdk-test"

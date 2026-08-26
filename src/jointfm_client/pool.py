@@ -180,7 +180,7 @@ class JointFMInstancePool:
                 self._cool_down(candidate.deployment_id)
                 _log_unavailable(candidate.deployment_id, error)
                 continue
-            self._clear_cooldown(candidate.deployment_id)
+            self._reactivate(candidate.deployment_id)
             return result
         assert last_error is not None
         raise last_error
@@ -188,12 +188,21 @@ class JointFMInstancePool:
     def _failover_candidates(
         self, preferred: JointFMInstanceSettings
     ) -> tuple[JointFMInstanceSettings, ...]:
-        active = self._eligible_instances()
-        if preferred.deployment_id in {peer.deployment_id for peer in active}:
-            return (preferred,) + tuple(
-                peer for peer in active if peer.deployment_id != preferred.deployment_id
+        """Prefer health-eligible peers; then try health-excluded peers last."""
+        eligible = self._eligible_instances()
+        if preferred.deployment_id in {peer.deployment_id for peer in eligible}:
+            preferred_first = (preferred,) + tuple(
+                peer
+                for peer in eligible
+                if peer.deployment_id != preferred.deployment_id
             )
-        return active
+        else:
+            preferred_first = eligible
+        seen = {peer.deployment_id for peer in preferred_first}
+        last_resort = tuple(
+            peer for peer in self._instances if peer.deployment_id not in seen
+        )
+        return preferred_first + last_resort
 
     def _eligible_instances(self) -> tuple[JointFMInstanceSettings, ...]:
         with self._lock:
@@ -220,8 +229,9 @@ class JointFMInstancePool:
                 time.monotonic() + self._peer_cooldown_seconds
             )
 
-    def _clear_cooldown(self, deployment_id: str) -> None:
+    def _reactivate(self, deployment_id: str) -> None:
         with self._lock:
+            self._active_ids.add(deployment_id)
             self._cooldown_until.pop(deployment_id, None)
 
     def _post_json(
