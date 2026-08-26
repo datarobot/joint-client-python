@@ -32,6 +32,7 @@ from jointfm_client.configuration import (
     DEFAULT_CONFIG_PATH,
     EnvironmentVariableConfig,
     JOINTFM_DEPLOYMENT_ID_ENV,
+    JOINTFM_DEPLOYMENT_IDS_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
     JOINTFM_LOCAL_BASE_URL_ENV,
@@ -52,11 +53,20 @@ from jointfm_client.exceptions import JointFMConfigurationError
 
 DeploymentSelector: TypeAlias = Literal[
     "deployment_id",
+    "deployment_ids",
     "deployment_url",
     "predict_url",
     "pulumi_target",
     "local_service",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class JointFMInstanceSettings:
+    """One hosted JointFM deployment target in a load-balanced pool."""
+
+    deployment_id: str
+    predict_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +79,7 @@ class JointFMSettings:
     predict_url: str
     deployment_selector: DeploymentSelector
     schema_version: str
+    instances: tuple[JointFMInstanceSettings, ...] = ()
     model_version: str | None = None
     deployment_id: str | None = None
     deployment_url: str | None = None
@@ -96,6 +107,16 @@ def load_settings(
         _required_env(env_values, environment.schema_version)
     )
     model_version = _optional_model_version(env_values, environment.model_version)
+    deployment_ids_value = env_values.get(environment.deployment_ids)
+    if deployment_ids_value is not None and deployment_ids_value != "":
+        _reject_conflicting_selectors_with_deployment_ids(env_values, environment)
+        return _load_hosted_deployment_pool_settings(
+            env_values,
+            environment,
+            schema_version=schema_version,
+            model_version=model_version,
+        )
+
     selector_name = _resolve_single_deployment_selector(env_values, environment)
 
     if selector_name == environment.local_base_url:
@@ -487,11 +508,94 @@ def _resolve_single_deployment_selector(
         if selector_name in env and env[selector_name] != ""
     ]
     if len(selector_names) != 1:
-        formatted_selectors = ", ".join(deployment_selector_envs)
+        formatted_selectors = ", ".join(
+            (*deployment_selector_envs, environment.deployment_ids)
+        )
         raise JointFMConfigurationError(
             f"Exactly one deployment selector is required: {formatted_selectors}"
         )
     return selector_names[0]
+
+
+def _load_hosted_deployment_pool_settings(
+    env: Mapping[str, str],
+    environment: EnvironmentVariableConfig,
+    *,
+    schema_version: str,
+    model_version: str | None,
+) -> JointFMSettings:
+    datarobot_endpoint = normalize_datarobot_endpoint(
+        _required_env(env, environment.datarobot_endpoint)
+    )
+    datarobot_api_token = validate_datarobot_api_token(
+        _required_env(env, environment.datarobot_api_token)
+    )
+    deployment_ids = _parse_deployment_ids(
+        _required_env(env, environment.deployment_ids)
+    )
+    instances = tuple(
+        JointFMInstanceSettings(
+            deployment_id=deployment_id,
+            predict_url=build_hosted_predict_url(datarobot_endpoint, deployment_id),
+        )
+        for deployment_id in deployment_ids
+    )
+    primary = instances[0]
+    return JointFMSettings(
+        datarobot_endpoint=datarobot_endpoint,
+        datarobot_api_token=datarobot_api_token,
+        health_url=primary.predict_url,
+        predict_url=primary.predict_url,
+        deployment_selector="deployment_ids",
+        schema_version=schema_version,
+        instances=instances,
+        model_version=model_version,
+        deployment_id=primary.deployment_id,
+        deployment_url=build_hosted_deployment_url(
+            datarobot_endpoint,
+            primary.deployment_id,
+        ),
+    )
+
+
+def _parse_deployment_ids(value: str) -> tuple[str, ...]:
+    if value.strip() != value or "," not in value:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must be a comma-separated list of "
+            "at least two unique deployment IDs"
+        )
+    deployment_ids: list[str] = []
+    seen: set[str] = set()
+    for part in value.split(","):
+        if part == "" or any(character.isspace() for character in part) or "/" in part:
+            raise JointFMConfigurationError(
+                f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain non-empty deployment IDs "
+                "without whitespace or URL paths"
+            )
+        if part in seen:
+            continue
+        seen.add(part)
+        deployment_ids.append(part)
+    if len(deployment_ids) < 2:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} must contain at least two unique deployment IDs"
+        )
+    return tuple(deployment_ids)
+
+
+def _reject_conflicting_selectors_with_deployment_ids(
+    env: Mapping[str, str],
+    environment: EnvironmentVariableConfig,
+) -> None:
+    conflicting = [
+        name
+        for name in environment.deployment_selector_names()
+        if name in env and env[name] != ""
+    ]
+    if conflicting:
+        raise JointFMConfigurationError(
+            f"{JOINTFM_DEPLOYMENT_IDS_ENV} cannot be combined with {', '.join(conflicting)}"
+        )
 
 
 def _load_pulumi_target_outputs(

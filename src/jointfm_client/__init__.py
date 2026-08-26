@@ -99,6 +99,7 @@ from jointfm_client.exceptions import (
     UnsupportedSchemaVersionError,
     UnsupportedServiceContractError,
 )
+from jointfm_client.pool import JointFMInstancePool
 from jointfm_client.notebooks import (
     WORKSPACE_ROOT_MARKERS,
     bootstrap_notebook,
@@ -108,6 +109,7 @@ from jointfm_client.settings import (
     DATAROBOT_API_TOKEN_ENV,
     DATAROBOT_ENDPOINT_ENV,
     JOINTFM_DEPLOYMENT_ID_ENV,
+    JOINTFM_DEPLOYMENT_IDS_ENV,
     JOINTFM_DEPLOYMENT_TARGET_ENV,
     JOINTFM_DEPLOYMENT_URL_ENV,
     JOINTFM_LOCAL_BASE_URL_ENV,
@@ -115,6 +117,7 @@ from jointfm_client.settings import (
     JOINTFM_PREDICT_URL_ENV,
     JOINTFM_PULUMI_OUTPUTS_PATH_ENV,
     JOINTFM_SCHEMA_VERSION_ENV,
+    JointFMInstanceSettings,
     JointFMSettings,
     build_datarobot_prediction_headers,
     build_hosted_deployment_url,
@@ -170,6 +173,7 @@ __all__ = [
     "IMPORT_NAMESPACE",
     "MeanForecastResult",
     "JOINTFM_DEPLOYMENT_ID_ENV",
+    "JOINTFM_DEPLOYMENT_IDS_ENV",
     "JOINTFM_DEPLOYMENT_TARGET_ENV",
     "JOINTFM_DEPLOYMENT_URL_ENV",
     "JOINTFM_LOCAL_BASE_URL_ENV",
@@ -189,6 +193,8 @@ __all__ = [
     "JointFMResponseDecodeError",
     "JointFMResponseError",
     "JointFMServiceError",
+    "JointFMInstancePool",
+    "JointFMInstanceSettings",
     "JointFMRetryConfig",
     "JointFMSettings",
     "JointFMTimeoutConfig",

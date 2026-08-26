@@ -39,6 +39,7 @@ from jointfm_client import (
     JointFMRequestError,
     JointFMHTTPStatusError,
     JointFMHTTPTransport,
+    JointFMInstanceSettings,
     JointFMResponseDecodeError,
     JointFMServiceError,
     JointFMRetryConfig,
@@ -47,6 +48,7 @@ from jointfm_client import (
     MeanForecastResult,
     SampleForecastResult,
     UnsupportedModelVersionError,
+    UnsupportedServiceContractError,
 )
 
 
@@ -143,7 +145,9 @@ class ErroringSession(requests.Session):
 
 
 def _health_payload(
-    *, model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test"
+    *,
+    model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
+    checkpoint_version: str = "sdk-test",
 ) -> dict[str, object]:
     """Health payload."""
     return {
@@ -151,7 +155,7 @@ def _health_payload(
         "schema_version": "v1",
         "image_version": "0.2.0",
         "model_version": model_version,
-        "checkpoint_version": "sdk-test",
+        "checkpoint_version": checkpoint_version,
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
         "head": "studentt",
@@ -1181,3 +1185,148 @@ def _server_url(server: ThreadingHTTPServer) -> str:
     host = server.server_address[0]
     port = server.server_address[1]
     return f"http://{host}:{port}/predict"
+
+
+def _pool_settings(primary: str, backup: str) -> JointFMSettings:
+    """Pool settings."""
+    return JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url=primary,
+        predict_url=primary,
+        deployment_selector="deployment_ids",
+        schema_version="v1",
+        instances=(
+            JointFMInstanceSettings(deployment_id="primary-id", predict_url=primary),
+            JointFMInstanceSettings(deployment_id="backup-id", predict_url=backup),
+        ),
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="primary-id",
+    )
+
+
+def test_client_pool_health_gate_and_round_robin() -> None:
+    """Client pool health gate and round robin."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = _pool_settings(primary, backup)
+
+    class PoolTransport:
+        """Pool Transport (test helper)."""
+
+        def __init__(self) -> None:
+            """Init."""
+            self.urls: list[str] = []
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            self.urls.append(url)
+            if payload.get("request_type") == "health":
+                return _health_payload()
+            return _forecast_response_payload()
+
+    transport = PoolTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+    payload = {
+        "schema_version": "v1",
+        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+    }
+    client.predict(payload)
+    client.predict(payload)
+    assert transport.urls[:2] == [primary, backup]
+    assert transport.urls[2:] == [primary, backup]
+    assert client._health_metadata is not None
+
+    class MismatchTransport:
+        """Mismatch Transport (test helper)."""
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            if payload.get("request_type") != "health":
+                raise AssertionError("predict must not run before pool health gate")
+            if url == primary:
+                return _health_payload(checkpoint_version="ckpt-a")
+            return _health_payload(checkpoint_version="ckpt-b")
+
+    with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
+        JointFMClient(settings=settings, transport=MismatchTransport()).predict(payload)
+
+
+def test_client_pool_forecast_samples_batches_across_peers() -> None:
+    """Pool sample batching pins batches to peers and merges the full sample count."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = _pool_settings(primary, backup)
+    predict_urls: list[str] = []
+
+    class PoolSampleTransport:
+        """Pool Sample Transport (test helper)."""
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            if payload.get("request_type") == "health":
+                health = _health_payload()
+                health["max_sample_count"] = 2
+                return health
+            predict_urls.append(url)
+            sample_count = cast(int, payload["n_samples"])
+            seed = cast(int, payload["seed"])
+            base = (seed - 7) * sample_count
+            samples = [
+                [[float(sample_index)]]
+                for sample_index in range(base, base + sample_count)
+            ]
+            response_payload = _forecast_response_payload(return_mode="samples")
+            outputs = cast(dict[str, object], response_payload["outputs"])
+            outputs["samples"] = samples
+            diagnostics = cast(dict[str, object], response_payload["diagnostics"])
+            diagnostics["seed"] = payload.get("seed")
+            return response_payload
+
+    client = JointFMClient(settings=settings, transport=PoolSampleTransport())
+    schema = DataFrameSchema(
+        columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+        time_index_mode="ordinal",
+    )
+    result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        n_samples=4,
+        seed=7,
+    )
+
+    assert isinstance(result, SampleForecastResult)
+    assert len(result.samples) == 4
+    assert result.samples == (
+        ((0.0,),),
+        ((1.0,),),
+        ((2.0,),),
+        ((3.0,),),
+    )
+    assert set(predict_urls) == {primary, backup}
+    assert len(predict_urls) == 2
