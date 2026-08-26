@@ -10,6 +10,17 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.4.0 (2026-08-26)
+
+### Feat
+
+- add CLAUDE.md to document agent instructions reference
+- specify uv version in CI and publish workflows, update required version in pyproject.toml
+
+### Fix
+
+- update AGENTS.md to clarify agent command execution and configuration comment guidelines
+
 ## v0.3.0 (2026-08-17)
 
 ### Feat
