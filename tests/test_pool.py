@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+import threading
 from typing import Any
 
 import pytest
@@ -28,6 +30,7 @@ from jointfm_client import (
     UnsupportedModelVersionError,
     UnsupportedServiceContractError,
 )
+from jointfm_client.transport import JSONTransport
 
 
 def _instance(deployment_id: str) -> JointFMInstanceSettings:
@@ -102,12 +105,29 @@ class _Transport:
         return {"ok": True, "deployment_id": deployment_id}
 
 
+def _pool(
+    *,
+    instances: Sequence[JointFMInstanceSettings] | None = None,
+    transport: JSONTransport | None = None,
+    transports: Sequence[JSONTransport] | None = None,
+    peer_cooldown_seconds: float = 30.0,
+    expected_model_version: str | None = None,
+) -> JointFMInstancePool:
+    peers = tuple(instances or (_instance("a"), _instance("b")))
+    if transports is None:
+        shared = transport or _Transport()
+        transports = tuple(shared for _ in peers)
+    return JointFMInstancePool(
+        instances=peers,
+        transports=transports,
+        peer_cooldown_seconds=peer_cooldown_seconds,
+        expected_model_version=expected_model_version,
+    )
+
+
 def test_pool_retries_next_instance_on_470() -> None:
     """Pool retries next instance on 470."""
-    pool = JointFMInstancePool(
-        instances=(_instance("a"), _instance("b")),
-        transport=_Transport(fail_ids=frozenset({"a"})),
-    )
+    pool = _pool(transport=_Transport(fail_ids=frozenset({"a"})))
     assert pool.next_instance().deployment_id == "a"
     assert pool.next_instance().deployment_id == "b"
     assert pool.post_json({"schema_version": "v1"}) == {
@@ -118,45 +138,133 @@ def test_pool_retries_next_instance_on_470() -> None:
 
 def test_pool_raises_when_all_instances_unavailable() -> None:
     """Pool raises when all instances unavailable."""
-    pool = JointFMInstancePool(
-        instances=(_instance("a"), _instance("b")),
-        transport=_Transport(fail_ids=frozenset({"a", "b"})),
-    )
+    pool = _pool(transport=_Transport(fail_ids=frozenset({"a", "b"})))
     with pytest.raises(JointFMHTTPStatusError, match="unavailable"):
         pool.post_json({"schema_version": "v1"})
 
 
 def test_pool_health_rejects_mismatch_and_aligns_sample_cap() -> None:
     """Pool health rejects mismatch and aligns sample cap."""
+    mismatched = _pool(
+        transport=_Transport(
+            health_by_id={
+                "a": _health(),
+                "b": _health(model_version="jointfm-inference:9.9.9+ckpt.other"),
+            }
+        )
+    )
     with pytest.raises(UnsupportedModelVersionError, match="model_version"):
-        JointFMInstancePool(
-            instances=(_instance("a"), _instance("b")),
-            transport=_Transport(
-                health_by_id={
-                    "a": _health(),
-                    "b": _health(model_version="jointfm-inference:9.9.9+ckpt.other"),
-                }
-            ),
-        ).probe_all_health()
+        mismatched.probe_all_health()
+    assert {mismatched.instance_at(i).deployment_id for i in range(2)} == {"a", "b"}
 
     with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
-        JointFMInstancePool(
-            instances=(_instance("a"), _instance("b")),
+        _pool(
             transport=_Transport(
                 health_by_id={
                     "a": _health(checkpoint_version="ckpt-a"),
                     "b": _health(checkpoint_version="ckpt-b"),
                 }
-            ),
+            )
         ).probe_all_health()
 
-    metadata = JointFMInstancePool(
-        instances=(_instance("a"), _instance("b")),
+    metadata = _pool(
         transport=_Transport(
             health_by_id={
                 "a": _health(max_sample_count=100),
                 "b": _health(max_sample_count=40),
             }
-        ),
+        )
     ).probe_all_health()
     assert metadata.max_sample_count == 40
+
+
+def test_pool_posts_concurrent_across_peers() -> None:
+    """Distinct peer transports allow two POSTs to be in flight at once."""
+    gate = threading.Barrier(2, timeout=2.0)
+
+    class _BlockingTransport:
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            del payload
+            gate.wait()
+            return {"ok": True, "url": url}
+
+    instances = (_instance("a"), _instance("b"))
+    pool = _pool(
+        instances=instances,
+        transports=(_BlockingTransport(), _BlockingTransport()),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                pool.post_json_to,
+                pool.instance_at(index),
+                {"schema_version": "v1"},
+            )
+            for index in range(2)
+        ]
+        results = [future.result(timeout=2.0) for future in futures]
+
+    assert {result["url"] for result in results} == {
+        instances[0].predict_url,
+        instances[1].predict_url,
+    }
+
+
+def test_pool_health_routes_only_reachable_peers() -> None:
+    """After health, sticky/RR skip peers that failed the probe."""
+    pool = _pool(
+        transport=_Transport(
+            health_by_id={"b": _health()},
+            fail_ids=frozenset({"a"}),
+        )
+    )
+    pool.probe_all_health()
+    assert pool.instance_at(0).deployment_id == "b"
+    assert pool.instance_at(1).deployment_id == "b"
+    assert pool.next_instance().deployment_id == "b"
+    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "b"
+
+
+def test_pool_health_skips_incompatible_peer_when_another_matches_pin() -> None:
+    """A pinned-incompatible backup is skipped; the matching primary stays usable."""
+    pinned = "jointfm-inference:0.2.0+ckpt.sdk-test"
+    pool = _pool(
+        transport=_Transport(
+            health_by_id={
+                "a": _health(model_version=pinned),
+                "b": _health(model_version="jointfm-inference:9.9.9+ckpt.other"),
+            }
+        ),
+        expected_model_version=pinned,
+    )
+    metadata = pool.probe_all_health()
+    assert metadata.model_version == pinned
+    assert pool.instance_at(0).deployment_id == "a"
+    assert pool.instance_at(1).deployment_id == "a"
+    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "a"
+
+
+def test_pool_cooldown_restores_peer_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retryable POST failures cool a peer down; it returns after the cooldown."""
+    clock = {"now": 100.0}
+    monkeypatch.setattr("jointfm_client.pool.time.monotonic", lambda: clock["now"])
+    transport = _Transport(fail_ids=frozenset({"a"}))
+    pool = _pool(transport=transport, peer_cooldown_seconds=10.0)
+
+    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "b"
+    assert pool.instance_at(0).deployment_id == "b"
+    assert pool.instance_at(1).deployment_id == "b"
+
+    transport.fail_ids = frozenset()
+    clock["now"] = 109.0
+    assert pool.instance_at(0).deployment_id == "b"
+
+    clock["now"] = 110.0
+    assert {pool.instance_at(i).deployment_id for i in range(2)} == {"a", "b"}
+    assert pool.post_json({"schema_version": "v1"})["deployment_id"] in {"a", "b"}

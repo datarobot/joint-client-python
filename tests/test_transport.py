@@ -1263,3 +1263,70 @@ def test_client_pool_health_gate_and_round_robin() -> None:
 
     with pytest.raises(UnsupportedServiceContractError, match="checkpoint_version"):
         JointFMClient(settings=settings, transport=MismatchTransport()).predict(payload)
+
+
+def test_client_pool_forecast_samples_batches_across_peers() -> None:
+    """Pool sample batching pins batches to peers and merges the full sample count."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = _pool_settings(primary, backup)
+    predict_urls: list[str] = []
+
+    class PoolSampleTransport:
+        """Pool Sample Transport (test helper)."""
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            if payload.get("request_type") == "health":
+                health = _health_payload()
+                health["max_sample_count"] = 2
+                return health
+            predict_urls.append(url)
+            sample_count = cast(int, payload["n_samples"])
+            seed = cast(int, payload["seed"])
+            base = (seed - 7) * sample_count
+            samples = [
+                [[float(sample_index)]]
+                for sample_index in range(base, base + sample_count)
+            ]
+            response_payload = _forecast_response_payload(return_mode="samples")
+            outputs = cast(dict[str, object], response_payload["outputs"])
+            outputs["samples"] = samples
+            diagnostics = cast(dict[str, object], response_payload["diagnostics"])
+            diagnostics["seed"] = payload.get("seed")
+            return response_payload
+
+    client = JointFMClient(settings=settings, transport=PoolSampleTransport())
+    schema = DataFrameSchema(
+        columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+        time_index_mode="ordinal",
+    )
+    result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        n_samples=4,
+        seed=7,
+    )
+
+    assert isinstance(result, SampleForecastResult)
+    assert len(result.samples) == 4
+    assert result.samples == (
+        ((0.0,),),
+        ((1.0,),),
+        ((2.0,),),
+        ((3.0,),),
+    )
+    assert set(predict_urls) == {primary, backup}
+    assert len(predict_urls) == 2
