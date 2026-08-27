@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Self
 
 from jointfm_client.configuration import DEFAULT_RETRY_STATUS_CODES
 from jointfm_client.contract import (
@@ -75,6 +75,26 @@ class InstanceHealth:
     deployment_id: str | None
     metadata: HealthMetadata | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HealthInstances:
+    """Per-deployment health results and the summed sample budget."""
+
+    instances: tuple[InstanceHealth, ...]
+    max_sample_count: int
+
+    @classmethod
+    def from_instances(cls, instances: tuple[InstanceHealth, ...]) -> Self:
+        """Build the response; ``max_sample_count`` sums reachable peers' caps."""
+        return cls(
+            instances=instances,
+            max_sample_count=sum(
+                instance.metadata.max_sample_count
+                for instance in instances
+                if instance.metadata is not None
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

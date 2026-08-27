@@ -59,7 +59,7 @@ from jointfm_client.contract import (
     QuantileForecastResult,
     SampleForecastResult,
 )
-from jointfm_client.pool import InstanceHealth, JointFMInstancePool
+from jointfm_client.pool import HealthInstances, InstanceHealth, JointFMInstancePool
 from jointfm_client.settings import (
     JointFMSettings,
     load_settings,
@@ -174,14 +174,17 @@ class JointFMClient:
 
     def health_instances(
         self, *, cache: bool = False, refresh: bool = False
-    ) -> tuple[InstanceHealth, ...]:
+    ) -> HealthInstances:
         """Return per-deployment health from the same probe as ``health()``.
 
         A single-endpoint client yields one entry. A deployment-ID pool yields
         one entry per configured ID, including peers skipped as unreachable or
-        incompatible.
+        incompatible. ``max_sample_count`` is the sum of each reachable instance's
+        ``max_sample_count``.
         """
-        return self._probe_health(cache=cache, refresh=refresh).instances
+        return HealthInstances.from_instances(
+            self._probe_health(cache=cache, refresh=refresh).instances
+        )
 
     def _probe_health(self, *, cache: bool, refresh: bool) -> _ProbedHealth:
         """Probe endpoints and return consensus plus per-deployment results."""
