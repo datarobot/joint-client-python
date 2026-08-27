@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 import re
 from typing import Any, Self, cast
@@ -58,7 +59,7 @@ from jointfm_client.contract import (
     QuantileForecastResult,
     SampleForecastResult,
 )
-from jointfm_client.pool import JointFMInstancePool
+from jointfm_client.pool import InstanceHealth, JointFMInstancePool
 from jointfm_client.settings import (
     JointFMSettings,
     load_settings,
@@ -75,6 +76,14 @@ _SAMPLE_CAP_ERROR_PATTERN = re.compile(
     r"n_samples exceeds the configured container cap:\s*"
     r"requested\s+(?P<requested>[0-9]+),\s*max\s+(?P<cap>[0-9]+)"
 )
+
+
+@dataclass(frozen=True, slots=True)
+class _ProbedHealth:
+    """Consensus health metadata and per-deployment probe outcomes."""
+
+    metadata: HealthMetadata
+    instances: tuple[InstanceHealth, ...]
 
 
 class JointFMClient:
@@ -108,7 +117,7 @@ class JointFMClient:
         self._retry_config = retry_config
         self._response_body_excerpt_characters = response_body_excerpt_characters
         self._datarobot_request_id_headers = datarobot_request_id_headers
-        self._health_metadata: HealthMetadata | None = None
+        self._probed_health: _ProbedHealth | None = None
         self._sample_batch_cap: int | None = None
         self._pool: JointFMInstancePool | None = None
 
@@ -158,34 +167,66 @@ class JointFMClient:
 
         When ``JOINTFM_DEPLOYMENT_IDS`` is set, reachable peers are probed and must
         share ``model_version`` and ``checkpoint_version``; the sample-batch cap is
-        the minimum ``max_sample_count`` across those peers.
+        the minimum ``max_sample_count`` across those peers. Use
+        ``health_instances()`` for the per-deployment results of this probe.
         """
-        if cache and not refresh and self._health_metadata is not None:
-            return self._health_metadata
+        return self._probe_health(cache=cache, refresh=refresh).metadata
 
-        if self._uses_pool():
-            metadata = self._require_pool().probe_all_health()
-            self._sample_batch_cap = metadata.max_sample_count
-            if cache:
-                self._health_metadata = metadata
-            return metadata
+    def health_instances(
+        self, *, cache: bool = False, refresh: bool = False
+    ) -> tuple[InstanceHealth, ...]:
+        """Return per-deployment health from the same probe as ``health()``.
 
+        A single-endpoint client yields one entry. A deployment-ID pool yields
+        one entry per configured ID, including peers skipped as unreachable or
+        incompatible.
+        """
+        return self._probe_health(cache=cache, refresh=refresh).instances
+
+    def _probe_health(self, *, cache: bool, refresh: bool) -> _ProbedHealth:
+        """Probe endpoints and return consensus plus per-deployment results."""
+        if cache and not refresh and self._probed_health is not None:
+            return self._probed_health
+
+        probed = (
+            self._probe_pool_health()
+            if self._uses_pool()
+            else self._probe_single_health()
+        )
+
+        self._sample_batch_cap = probed.metadata.max_sample_count
+        if cache:
+            self._probed_health = probed
+        return probed
+
+    @property
+    def _health_metadata(self) -> HealthMetadata | None:
+        """Return cached consensus health metadata, if a probe has been stored."""
+        probed = self._probed_health
+        return None if probed is None else probed.metadata
+
+    def _probe_pool_health(self) -> _ProbedHealth:
+        """Probe a ``JOINTFM_DEPLOYMENT_IDS`` pool via the shared pool client."""
+        result = self._require_pool().probe_health()
+        return _ProbedHealth(result.metadata, result.instances)
+
+    def _probe_single_health(self) -> _ProbedHealth:
+        """Probe the single configured endpoint (local or hosted)."""
         if self._uses_predict_route_for_health():
             payload = self._fetch_hosted_health_payload()
         else:
-            health_url = self._require_health_url()
-            payload = self._transport_for_request().get_json(health_url)
-        expected_model_version = (
-            None if self.settings is None else self.settings.model_version
-        )
+            payload = self._transport_for_request().get_json(self._require_health_url())
+
         validate_service_metadata(
-            payload, expected_model_version=expected_model_version
+            payload,
+            expected_model_version=getattr(self.settings, "model_version", None),
         )
         metadata = HealthMetadata.from_payload(payload)
-        self._sample_batch_cap = metadata.max_sample_count
-        if cache:
-            self._health_metadata = metadata
-        return metadata
+        deployment_id = getattr(self.settings, "deployment_id", None)
+        return _ProbedHealth(
+            metadata,
+            (InstanceHealth(deployment_id=deployment_id, metadata=metadata),),
+        )
 
     def _uses_predict_route_for_health(self) -> bool:
         """Return whether hosted health probes must POST to the predict route."""
