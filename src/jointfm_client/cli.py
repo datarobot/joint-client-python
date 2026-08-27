@@ -147,8 +147,24 @@ def _add_dotenv_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _health_command(args: argparse.Namespace, stdout: TextIO) -> int:
     client = JointFMClient.from_env(dotenv_path=_dotenv_path(args))
-    health = client.health()
-    payload: dict[str, Any] = {"service": asdict(health)}
+    health = client.health(cache=True)
+    instances = client.health_instances(cache=True)
+    payload: dict[str, Any] = {
+        "service": asdict(health),
+        "instances": [
+            {
+                "deployment_id": entry.deployment_id,
+                "available": entry.metadata is not None,
+                "max_sample_count": (
+                    None if entry.metadata is None else entry.metadata.max_sample_count
+                ),
+                "error": entry.error,
+            }
+            for entry in instances.instances
+        ],
+        "topology": instances.topology_label,
+        "max_sample_count": instances.max_sample_count,
+    }
     if client.settings is not None:
         payload["deployment"] = {
             "selector": client.settings.deployment_selector,

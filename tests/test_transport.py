@@ -618,6 +618,33 @@ def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -
     assert transport.post_count == 4
 
 
+def test_client_health_instances_returns_one_entry_for_single_endpoint() -> None:
+    """Single-endpoint clients expose one InstanceHealth via health_instances()."""
+    settings = JointFMSettings(
+        datarobot_endpoint="https://app.datarobot.com/api/v2",
+        datarobot_api_token="secret-token",
+        health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
+        predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
+        deployment_selector="deployment_id",
+        schema_version="v1",
+        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        deployment_id="deployment-id",
+    )
+    transport = RecordingTransport()
+    client = JointFMClient(settings=settings, transport=transport)
+
+    instances = client.health_instances()
+
+    assert len(instances.instances) == 1
+    assert instances.instances[0].deployment_id == "deployment-id"
+    assert instances.instances[0].metadata is not None
+    assert (
+        instances.max_sample_count == instances.instances[0].metadata.max_sample_count
+    )
+    assert instances.topology_label == f"1x{instances.max_sample_count}"
+    assert transport.post_count == 1
+
+
 def test_client_from_env_forwards_timeout_and_retry_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -12,7 +12,7 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Current SDK package version: `0.4.0`
 - Current JointFM service schema: `schema_version="v1"`
 
-The public API shape is a synchronous low-level `JointFMClient` with `health()` and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
+The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
 SDK package versions are standard Python distribution versions: `[project].version` in `pyproject.toml` and `jointfm_client.__version__` describe the released client library. JointFM `schema_version`, `image_version`, `model_version`, and `checkpoint_version` are service compatibility identifiers carried in configuration, health metadata, requests, and responses. They are not SDK package versions, and changing a deployment pin does not by itself require changing the SDK package version.
 
@@ -120,15 +120,19 @@ Direct local URL helpers are used by the local service selector: `build_local_he
 
 Hosted settings also derive `health_url` from the resolved deployment URL as `deployments/{deployment_id}/healthz`. `JointFMClient.health(cache=True)` stores typed `HealthMetadata` only when the caller asks for caching, and `JointFMClient.refresh_health()` fetches a fresh copy.
 
+Each endpoint's health payload describes only that endpoint. With `JOINTFM_DEPLOYMENT_IDS`, the client probes every configured peer and aggregates locally: `health()` returns consensus metadata whose `max_sample_count` is the **minimum** reachable cap (the sample-batch size), while `health_instances()` returns one `InstanceHealth` per configured ID plus the **sum** of reachable caps as overall parallel capacity, a compact `topology` / `topology_label` (for example `2x5000` or `1x7000, 1x3000`), and errors for unavailable peers.
+
 ## CLI Workflows
 
 The package installs a `jointfm-client` command. It reads `.env` by default, accepts `--dotenv <path>` for another file, and accepts `--no-dotenv` when the process environment should be the only source.
 
-Validate credentials, resolve the deployment, call `/healthz`, and print non-secret service metadata:
+Validate credentials, resolve the deployment, probe health, and print non-secret service metadata plus per-instance availability and sample topology:
 
 ```bash
 uv run jointfm-client health
 ```
+
+The health command includes consensus `service` metadata, an `instances` list (available/unavailable, per-instance sample cap, errors), `topology` (for example `1x7000, 1x3000`), overall `max_sample_count` (sum of reachable caps), and non-secret `deployment` settings when configured.
 
 Submit one low-level JSON request file and write the JSON response file:
 

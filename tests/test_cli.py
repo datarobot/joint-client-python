@@ -23,7 +23,13 @@ from typing import Any
 
 import pandas as pd
 
-from jointfm_client import HealthMetadata, JointFMResponseDecodeError, JointFMSettings
+from jointfm_client import (
+    HealthInstances,
+    HealthMetadata,
+    InstanceHealth,
+    JointFMResponseDecodeError,
+    JointFMSettings,
+)
 from jointfm_client import cli
 
 
@@ -47,8 +53,9 @@ class FakeHealthClient:
         deployment_id="deployment-id",
     )
 
-    def health(self) -> HealthMetadata:
+    def health(self, *, cache: bool = False, refresh: bool = False) -> HealthMetadata:
         """Health."""
+        del cache, refresh
         return HealthMetadata(
             status="ok",
             schema_version="v1",
@@ -68,6 +75,20 @@ class FakeHealthClient:
             ),
             time_index_encoding="legacy_discrete_grid",
             max_sample_count=4096,
+        )
+
+    def health_instances(
+        self, *, cache: bool = False, refresh: bool = False
+    ) -> HealthInstances:
+        """Health instances."""
+        del cache, refresh
+        return HealthInstances.from_instances(
+            (
+                InstanceHealth(
+                    deployment_id="deployment-id",
+                    metadata=self.health(),
+                ),
+            )
         )
 
 
@@ -128,6 +149,16 @@ def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
     assert payload["service"]["status"] == "ok"
     assert payload["service"]["decoding_strategy"] == "parallel_dense"
     assert payload["deployment"]["deployment_id"] == "deployment-id"
+    assert payload["instances"] == [
+        {
+            "deployment_id": "deployment-id",
+            "available": True,
+            "max_sample_count": 4096,
+            "error": None,
+        }
+    ]
+    assert payload["topology"] == "1x4096"
+    assert payload["max_sample_count"] == 4096
     assert "secret-token" not in output
 
 

@@ -16,12 +16,13 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Self
 
 from jointfm_client.configuration import DEFAULT_RETRY_STATUS_CODES
 from jointfm_client.contract import (
@@ -69,11 +70,53 @@ class PoolPeer:
 
 
 @dataclass(frozen=True, slots=True)
+class InstanceHealth:
+    """Health probe outcome for one configured JointFM deployment."""
+
+    deployment_id: str | None
+    metadata: HealthMetadata | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HealthInstances:
+    """Per-deployment health results and the summed sample budget.
+
+    ``max_sample_count`` is the sum of reachable peers' caps (overall parallel
+    capacity). ``topology`` groups those caps as ``(count, cap)`` pairs sorted by
+    descending cap; unavailable instances are omitted from both.
+    """
+
+    instances: tuple[InstanceHealth, ...]
+    max_sample_count: int
+    topology: tuple[tuple[int, int], ...]
+    topology_label: str
+
+    @classmethod
+    def from_instances(cls, instances: tuple[InstanceHealth, ...]) -> Self:
+        """Build the response from per-deployment probe outcomes."""
+        caps = tuple(
+            instance.metadata.max_sample_count
+            for instance in instances
+            if instance.metadata is not None
+        )
+        counts = Counter(caps)
+        topology = tuple((counts[cap], cap) for cap in sorted(counts, reverse=True))
+        return cls(
+            instances=instances,
+            max_sample_count=sum(caps),
+            topology=topology,
+            topology_label=", ".join(f"{count}x{cap}" for count, cap in topology),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class HealthProbeResult:
-    """Merged health metadata and the peer IDs that passed the gate."""
+    """Merged health metadata, healthy peer IDs, and per-deployment outcomes."""
 
     metadata: HealthMetadata
     healthy_ids: frozenset[str]
+    instances: tuple[InstanceHealth, ...]
 
 
 class PeerRoutingState:
@@ -150,6 +193,7 @@ class PoolHealthGate:
 
     def probe(self, peers: Sequence[PoolPeer]) -> HealthProbeResult:
         """Probe peers; skip per-peer failures; fail only when none are usable."""
+        instances: list[InstanceHealth] = []
         healthy: list[tuple[PoolPeer, HealthMetadata]] = []
         last_error: BaseException | None = None
         for peer in peers:
@@ -158,12 +202,25 @@ class PoolHealthGate:
                 validate_service_metadata(
                     payload, expected_model_version=self._expected_model_version
                 )
-                healthy.append((peer, HealthMetadata.from_payload(payload)))
+                metadata = HealthMetadata.from_payload(payload)
+                healthy.append((peer, metadata))
+                instances.append(
+                    InstanceHealth(
+                        deployment_id=peer.deployment_id,
+                        metadata=metadata,
+                    )
+                )
             except Exception as error:
                 # Skip unreachable or incompatible peers; a bad backup must not
                 # take down a healthy primary.
                 last_error = error
                 _log_unavailable(peer.deployment_id, error)
+                instances.append(
+                    InstanceHealth(
+                        deployment_id=peer.deployment_id,
+                        error=str(error),
+                    )
+                )
 
         if not healthy:
             assert last_error is not None
@@ -183,6 +240,7 @@ class PoolHealthGate:
         return HealthProbeResult(
             metadata=metadata,
             healthy_ids=frozenset(peer.deployment_id for peer, _ in healthy),
+            instances=tuple(instances),
         )
 
 
@@ -241,6 +299,12 @@ class JointFMInstancePool:
         """Return the eligible instance pinned for ``index`` (sticky batch mapping)."""
         return self._routing.at(self._peers, index).settings
 
+    def probe_health(self) -> HealthProbeResult:
+        """Probe peers and return consensus metadata plus per-peer results."""
+        result = self._health_gate.probe(self._peers)
+        self._routing.set_healthy(tuple(result.healthy_ids))
+        return result
+
     def probe_all_health(self) -> HealthMetadata:
         """Probe peers; require matching model/checkpoint; return min sample cap.
 
@@ -248,9 +312,7 @@ class JointFMInstancePool:
         only when no peer is usable, or when usable peers disagree with each
         other on model/checkpoint.
         """
-        result = self._health_gate.probe(self._peers)
-        self._routing.set_healthy(tuple(result.healthy_ids))
-        return result.metadata
+        return self.probe_health().metadata
 
     def post_json(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
         """POST payload via round-robin, trying other peers on retryable failures."""

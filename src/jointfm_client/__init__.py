@@ -99,7 +99,7 @@ from jointfm_client.exceptions import (
     UnsupportedSchemaVersionError,
     UnsupportedServiceContractError,
 )
-from jointfm_client.pool import JointFMInstancePool
+from jointfm_client.pool import HealthInstances, InstanceHealth, JointFMInstancePool
 from jointfm_client.notebooks import (
     WORKSPACE_ROOT_MARKERS,
     bootstrap_notebook,
@@ -169,7 +169,9 @@ __all__ = [
     "ForecastResponse",
     "HEALTH_REQUEST_TYPE",
     "HealthMetadata",
+    "HealthInstances",
     "HostedDeploymentConfig",
+    "InstanceHealth",
     "IMPORT_NAMESPACE",
     "MeanForecastResult",
     "JOINTFM_DEPLOYMENT_ID_ENV",
