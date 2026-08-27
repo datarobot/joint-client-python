@@ -19,7 +19,7 @@ tasks:
     cmds:
       - uv venv --allow-existing --python 3.13.3
       - uv sync --all-groups --extra notebooks
-      - uv run python -m ipykernel install --sys-prefix --name joint-client-python --display-name "Python (joint-client-python)"
+      - uv run python -m ipykernel install --user --name joint-client-python --display-name "Python (joint-client-python)"
       - uv run pre-commit install --hook-type pre-commit --hook-type commit-msg
       - task: install:ripgrep
       - task: install:typos
