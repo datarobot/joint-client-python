@@ -180,7 +180,11 @@ class JointFMClient:
         A single-endpoint client yields one entry. A deployment-ID pool yields
         one entry per configured ID, including peers skipped as unreachable or
         incompatible. ``max_sample_count`` is the sum of each reachable instance's
-        ``max_sample_count``.
+        ``max_sample_count`` (overall parallel capacity). ``topology`` /
+        ``topology_label`` group those caps (for example ``2x5000`` or
+        ``1x7000, 1x3000``); unavailable peers are listed but excluded from the
+        sum and topology. ``health()`` still returns the minimum reachable cap
+        used as the sample-batch size.
         """
         return HealthInstances.from_instances(
             self._probe_health(cache=cache, refresh=refresh).instances

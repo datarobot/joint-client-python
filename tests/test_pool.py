@@ -24,6 +24,9 @@ from typing import Any
 import pytest
 
 from jointfm_client import (
+    HealthInstances,
+    HealthMetadata,
+    InstanceHealth,
     JointFMHTTPStatusError,
     JointFMInstancePool,
     JointFMInstanceSettings,
@@ -176,6 +179,75 @@ def test_pool_health_rejects_mismatch_and_aligns_sample_cap() -> None:
         )
     ).probe_all_health()
     assert metadata.max_sample_count == 40
+
+
+def test_health_instances_sums_caps_and_builds_topology() -> None:
+    """Reachable caps sum and group into a compact topology label."""
+    result = _pool(
+        transport=_Transport(
+            health_by_id={
+                "a": _health(max_sample_count=7000),
+                "b": _health(max_sample_count=3000),
+            }
+        )
+    ).probe_health()
+    instances = HealthInstances.from_instances(result.instances)
+
+    assert instances.max_sample_count == 10000
+    assert instances.topology == ((1, 7000), (1, 3000))
+    assert instances.topology_label == "1x7000, 1x3000"
+
+    matching = HealthInstances.from_instances(
+        _pool(
+            transport=_Transport(
+                health_by_id={
+                    "a": _health(max_sample_count=5000),
+                    "b": _health(max_sample_count=5000),
+                }
+            )
+        )
+        .probe_health()
+        .instances
+    )
+    assert matching.max_sample_count == 10000
+    assert matching.topology == ((2, 5000),)
+    assert matching.topology_label == "2x5000"
+
+
+def test_health_instances_excludes_unavailable_peer_from_sum_and_topology() -> None:
+    """Failed peers stay listed with an error but do not contribute capacity."""
+    result = _pool(
+        transport=_Transport(
+            health_by_id={"b": _health(max_sample_count=5000)},
+            fail_ids=frozenset({"a"}),
+        )
+    ).probe_health()
+    instances = HealthInstances.from_instances(result.instances)
+
+    assert [entry.deployment_id for entry in instances.instances] == ["a", "b"]
+    assert instances.instances[0].metadata is None
+    assert instances.instances[0].error is not None
+    assert instances.instances[1].metadata is not None
+    assert instances.max_sample_count == 5000
+    assert instances.topology == ((1, 5000),)
+    assert instances.topology_label == "1x5000"
+
+
+def _typed_health(*, max_sample_count: int = 4096) -> HealthMetadata:
+    """Typed health."""
+    return HealthMetadata.from_payload(_health(max_sample_count=max_sample_count))
+
+
+def test_health_instances_from_single_entry() -> None:
+    """A single reachable entry yields one instance and a 1x topology."""
+    entry = InstanceHealth(
+        deployment_id="deployment-id",
+        metadata=_typed_health(max_sample_count=4096),
+    )
+    instances = HealthInstances.from_instances((entry,))
+    assert len(instances.instances) == 1
+    assert instances.max_sample_count == 4096
+    assert instances.topology_label == "1x4096"
 
 
 def test_pool_posts_concurrent_across_peers() -> None:

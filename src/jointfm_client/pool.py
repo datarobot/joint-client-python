@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 import logging
@@ -79,21 +80,33 @@ class InstanceHealth:
 
 @dataclass(frozen=True, slots=True)
 class HealthInstances:
-    """Per-deployment health results and the summed sample budget."""
+    """Per-deployment health results and the summed sample budget.
+
+    ``max_sample_count`` is the sum of reachable peers' caps (overall parallel
+    capacity). ``topology`` groups those caps as ``(count, cap)`` pairs sorted by
+    descending cap; unavailable instances are omitted from both.
+    """
 
     instances: tuple[InstanceHealth, ...]
     max_sample_count: int
+    topology: tuple[tuple[int, int], ...]
+    topology_label: str
 
     @classmethod
     def from_instances(cls, instances: tuple[InstanceHealth, ...]) -> Self:
-        """Build the response; ``max_sample_count`` sums reachable peers' caps."""
+        """Build the response from per-deployment probe outcomes."""
+        caps = tuple(
+            instance.metadata.max_sample_count
+            for instance in instances
+            if instance.metadata is not None
+        )
+        counts = Counter(caps)
+        topology = tuple((counts[cap], cap) for cap in sorted(counts, reverse=True))
         return cls(
             instances=instances,
-            max_sample_count=sum(
-                instance.metadata.max_sample_count
-                for instance in instances
-                if instance.metadata is not None
-            ),
+            max_sample_count=sum(caps),
+            topology=topology,
+            topology_label=", ".join(f"{count}x{cap}" for count, cap in topology),
         )
 
 
