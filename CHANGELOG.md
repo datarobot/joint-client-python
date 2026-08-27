@@ -10,6 +10,13 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.4.1 (2026-08-27)
+
+### Fix
+
+- enhance service health notebook with detailed topology descripti… (#11)
+- update README and Taskfile (#9)
+
 ## v0.4.0 (2026-08-26)
 
 ### Feat
