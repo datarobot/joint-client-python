@@ -157,7 +157,7 @@ from jointfm_client import bootstrap_notebook
 bootstrap_notebook(add_src_root=True)
 ```
 
-Run `task setup` first so VS Code can select the checked-in `Python (joint-client-python)` notebook kernel backed by this repository's `.venv`.
+Run `task setup` first so VS Code can select the registered `Python (joint-client-python)` notebook kernel backed by this repository's `.venv`.
 
 The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
 
