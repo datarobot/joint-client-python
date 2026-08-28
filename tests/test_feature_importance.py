@@ -179,6 +179,21 @@ def test_permute_history_column_shuffles_row_sequence_values() -> None:
     assert history == [{"feat": 1.0, "target": 10.0}, {"feat": 2.0, "target": 11.0}]
 
 
+def test_permute_history_column_tolerates_rows_missing_the_column() -> None:
+    """A row that omits the feature key (sparse/nullable history) is left as-is."""
+    history = [
+        {"feat": 1.0, "target": 10.0},
+        {"target": 11.0},  # no "feat" key, same as forecast() already accepts
+        {"feat": 3.0, "target": 12.0},
+    ]
+
+    permuted = permute_history_column(history, "feat", seed=1)
+
+    assert "feat" not in permuted[1]
+    assert sorted(row["feat"] for row in permuted if "feat" in row) == [1.0, 3.0]
+    assert [row["target"] for row in permuted] == [10.0, 11.0, 12.0]
+
+
 def test_permute_history_column_shuffles_dataframe_values() -> None:
     """permute_history_column reshuffles one column across DataFrame rows."""
     pandas_module = pytest.importorskip("pandas")

@@ -80,12 +80,13 @@ def permute_history_column(history: Any, feature: str, *, seed: int) -> Any:
     rng = random.Random(seed)
     if _is_history_row_sequence(history):
         rows = [dict(row) for row in history]
-        if not rows or feature not in rows[0]:
+        present_indices = [index for index, row in enumerate(rows) if feature in row]
+        if not present_indices:
             raise ValueError(f"history rows are missing column {feature!r}")
-        values = [row[feature] for row in rows]
+        values = [rows[index][feature] for index in present_indices]
         rng.shuffle(values)
-        for row, value in zip(rows, values, strict=True):
-            row[feature] = value
+        for index, value in zip(present_indices, values, strict=True):
+            rows[index][feature] = value
         return rows
 
     pandas_module = _require_pandas_module()
