@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from jointfm_client import ColumnSpec, JointFMClient
+from jointfm_client import ColumnSpec, DataFrameSchema, JointFMClient
 from jointfm_client.feature_importance import (
     permute_history_column,
     sample_w2_distance,
@@ -120,6 +120,60 @@ def test_feature_importance_scores_mean_shift_and_distribution_distance() -> Non
     ]
     assert baseline_feature_values == [1.0, 2.0]
     assert sorted(permuted_feature_values) == sorted(baseline_feature_values)
+
+
+def test_feature_importance_accepts_dataframe_history_with_explicit_schema() -> None:
+    """A DataFrame history paired with an explicit schema reaches the service.
+
+    forecast() takes the row-payload path whenever schema is set, even when
+    history is a DataFrame rather than a row sequence, so feature_importance
+    must convert the frame to rows itself before delegating.
+    """
+    pandas_module = pytest.importorskip("pandas")
+    transport = _ImportanceTransport(
+        sample_batches=[
+            [[[10.0], [20.0]], [[12.0], [22.0]]],
+            [[[11.0], [15.0]], [[13.0], [27.0]]],
+        ]
+    )
+    client = JointFMClient(
+        predict_url="http://localhost:8080/predict",
+        transport=transport,
+    )
+    schema = DataFrameSchema(
+        columns=(
+            ColumnSpec(name="target", modality="numeric", role="target"),
+            ColumnSpec(name="feat", modality="numeric", role="feature"),
+        ),
+        time_index_mode="ordinal",
+        time_column="t",
+    )
+    frame = pandas_module.DataFrame(
+        {"t": [0, 1], "target": [10.0, 11.0], "feat": [1.0, 2.0]}
+    )
+
+    result = client.feature_importance(
+        frame,
+        query_times=[2, 3],
+        horizons=[1, 2],
+        feature_columns=["feat"],
+        target_columns=["target"],
+        schema=schema,
+        model_version=_MODEL_VERSION,
+        n_samples=2,
+        seed=7,
+    )
+
+    assert result == [
+        {
+            "feature": "feat",
+            "mean": {"target": {1: 1.0, 2: 0.0}},
+            "distance": {"target": {1: 0.0, 2: 12.5}},
+        }
+    ]
+    assert len(transport.payloads) == 2
+    # the original frame is untouched by the conversion/permutation
+    assert frame["feat"].tolist() == [1.0, 2.0]
 
 
 def test_feature_importance_requires_non_empty_feature_columns() -> None:

@@ -24,7 +24,10 @@ import re
 from typing import Any, Self, cast
 from urllib.parse import urlparse
 
-from jointfm_client.adapters import build_forecast_payload_from_dataframe
+from jointfm_client.adapters import (
+    build_forecast_payload_from_dataframe,
+    dataframe_to_history_rows,
+)
 from jointfm_client.configuration import (
     DATAROBOT_REQUEST_ID_HEADERS,
     DEFAULT_CONFIG_PATH,
@@ -581,8 +584,14 @@ class JointFMClient:
         seed: int,
     ) -> SampleForecastResult:
         """Sample-forecast one history for ``feature_importance``, role-aware."""
+        resolved_history = history
+        if schema is not None and not _is_history_row_sequence(history):
+            # forecast() takes the row-payload path whenever schema is set, so a
+            # DataFrame paired with an explicit schema must become rows first.
+            resolved_history = dataframe_to_history_rows(history, schema)
+
         result = self.forecast(
-            history,
+            resolved_history,
             query_times=query_times,
             schema=schema,
             time_index_mode=time_index_mode,
