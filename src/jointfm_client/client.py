@@ -24,7 +24,10 @@ import re
 from typing import Any, Self, cast
 from urllib.parse import urlparse
 
-from jointfm_client.adapters import build_forecast_payload_from_dataframe
+from jointfm_client.adapters import (
+    build_forecast_payload_from_dataframe,
+    dataframe_to_history_rows,
+)
 from jointfm_client.configuration import (
     DATAROBOT_REQUEST_ID_HEADERS,
     DEFAULT_CONFIG_PATH,
@@ -51,6 +54,10 @@ from jointfm_client.exceptions import (
     JointFMHTTPStatusError,
     JointFMServiceError,
     UnsupportedModelVersionError,
+)
+from jointfm_client.feature_importance import (
+    feature_importance_entry,
+    permute_history_column,
 )
 from jointfm_client.contract import (
     ForecastDiagnostics,
@@ -473,6 +480,137 @@ class JointFMClient:
                 seed=seed,
             ),
         )
+
+    def feature_importance(
+        self,
+        history: Any,
+        *,
+        query_times: Sequence[Any],
+        horizons: Sequence[int],
+        feature_columns: Sequence[str],
+        target_columns: Sequence[str],
+        schema: DataFrameSchema | None = None,
+        time_index_mode: TimeIndexMode = "ordinal",
+        columns: Sequence[ColumnSpec] | None = None,
+        time_column: str | None = None,
+        model_version: str | None = None,
+        n_samples: int = 1024,
+        seed: int = 7,
+    ) -> list[dict[str, Any]]:
+        """Permutation feature importance for each feature, target, and horizon.
+
+        For every column in ``feature_columns``, the column is shuffled across
+        history rows (preserving its marginal) and scored against one shared
+        baseline forecast sampled from the unpermuted history. ``horizons`` are
+        integer labels for the output, paired by position with ``query_times``
+        (``horizons[i]`` names the forecast step requested by
+        ``query_times[i]``).
+
+        Returns one dict per feature: ``{"feature": name, "mean": {target:
+        {horizon: value}}, "distance": {target: {horizon: value}}}``. ``mean``
+        is the absolute shift in forecast mean; ``distance`` is the centered
+        squared 2-Wasserstein distance between baseline and permuted forecast
+        samples, which also catches distributional changes a mean shift alone
+        would miss. Both are computed from the same permuted-forecast sample
+        set, at the same seed and sample count as the baseline.
+        """
+        if len(feature_columns) == 0:
+            raise ValueError("feature_columns must not be empty")
+        if len(target_columns) == 0:
+            raise ValueError("target_columns must not be empty")
+        if len(horizons) != len(query_times):
+            raise ValueError(
+                "horizons must have the same length as query_times: "
+                f"{len(horizons)} != {len(query_times)}"
+            )
+
+        baseline = self._sample_forecast_for_importance(
+            history,
+            query_times=query_times,
+            schema=schema,
+            time_index_mode=time_index_mode,
+            columns=columns,
+            time_column=time_column,
+            target_columns=target_columns,
+            feature_columns=feature_columns,
+            model_version=model_version,
+            n_samples=n_samples,
+            seed=seed,
+        )
+
+        entries: list[dict[str, Any]] = []
+        for feature_index, feature in enumerate(feature_columns):
+            permuted_history = permute_history_column(
+                history, feature, seed=seed + 1009 * (feature_index + 1)
+            )
+            permuted = self._sample_forecast_for_importance(
+                permuted_history,
+                query_times=query_times,
+                schema=schema,
+                time_index_mode=time_index_mode,
+                columns=columns,
+                time_column=time_column,
+                target_columns=target_columns,
+                feature_columns=feature_columns,
+                model_version=model_version,
+                n_samples=n_samples,
+                seed=seed,
+            )
+            entries.append(
+                feature_importance_entry(
+                    feature=feature,
+                    horizons=horizons,
+                    target_columns=target_columns,
+                    baseline_samples=baseline.samples,
+                    permuted_samples=permuted.samples,
+                    baseline_columns=baseline.requested_columns,
+                )
+            )
+        return entries
+
+    def _sample_forecast_for_importance(
+        self,
+        history: Any,
+        *,
+        query_times: Sequence[Any],
+        schema: DataFrameSchema | None,
+        time_index_mode: TimeIndexMode,
+        columns: Sequence[ColumnSpec] | None,
+        time_column: str | None,
+        target_columns: Sequence[str],
+        feature_columns: Sequence[str],
+        model_version: str | None,
+        n_samples: int,
+        seed: int,
+    ) -> SampleForecastResult:
+        """Sample-forecast one history for ``feature_importance``, role-aware."""
+        resolved_history = history
+        if schema is not None and not _is_history_row_sequence(history):
+            # forecast() takes the row-payload path whenever schema is set, so a
+            # DataFrame paired with an explicit schema must become rows first.
+            resolved_history = dataframe_to_history_rows(history, schema)
+
+        result = self.forecast(
+            resolved_history,
+            query_times=query_times,
+            schema=schema,
+            time_index_mode=time_index_mode,
+            columns=columns,
+            time_column=time_column,
+            requested_columns=target_columns,
+            return_mode="samples",
+            model_version=model_version,
+            n_samples=n_samples,
+            seed=seed,
+            target_columns=target_columns,
+            feature_columns=feature_columns,
+        )
+        if not isinstance(result, SampleForecastResult):
+            raise JointFMServiceError(
+                "JointFM forecast response violated the V1 contract: "
+                "feature_importance requires sample forecast responses"
+            )
+        return result
 
     def refresh_health(self, *, cache: bool = True) -> HealthMetadata:
         """Fetch fresh service metadata and update the explicit cache by default."""
