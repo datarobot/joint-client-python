@@ -143,8 +143,8 @@ def _validate_wheel(
         )
         init_module = wheel_archive.read("jointfm_client/__init__.py").decode("utf-8")
         _require(
-            f'__version__ = "{package_version}"' in init_module,
-            "wheel __version__ does not match project.version",
+            "__version__ = PACKAGE_VERSION" in init_module,
+            "wheel __version__ must alias PACKAGE_VERSION, not a version literal",
         )
         typed_marker = wheel_archive.read("jointfm_client/py.typed").decode("utf-8")
         _require(typed_marker.strip() != "", "wheel py.typed marker must not be empty")
