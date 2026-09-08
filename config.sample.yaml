@@ -52,7 +52,7 @@ transport:
     - X-DataRobot-Execution-ID
   user_agent_header: User-Agent
 forecast:
-  schema_version: v1
+  schema_version: v2
   query_mode: forecast
   return_mode: mean
   time_index_mode: ordinal

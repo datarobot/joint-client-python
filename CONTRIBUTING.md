@@ -88,7 +88,7 @@ start with an underscore are implementation details.
 - Removing from `__all__`, renaming an exported name, or changing the shape of
   a public class, function, or exception is a **breaking change**. Use the
   Conventional Commits `!` marker or a `BREAKING CHANGE:` footer.
-- The wire contract pinned by `schema_version = "v1"` is owned by the JointFM
+- The wire contract pinned by `schema_version` is owned by the JointFM
   service team. Do not change the request or response shape unilaterally.
 - New public exports must also be documented in
   [docs/api-reference.md](docs/api-reference.md) in the same change.

@@ -14,12 +14,12 @@
 
 """Capability-aware forecast planning built from `/healthz` metadata.
 
-The planner adapts a notebook's desired ``(feature_columns, target_columns)``
-split to the data-generation envelope advertised by the deployment. A
-deployment that only supports targets (``max_features == 0``) needs every
-would-be feature passed as a target column; deployments with capacity caps
-need explicit checks against ``max_features``, ``max_targets``, ``n_input``,
-and ``n_output`` before a request is sent so callers see a clear, local
+The planner checks a notebook's desired ``(feature_columns, target_columns)``
+split against the data-generation envelope advertised by the deployment. That
+envelope caps the *total* number of series in one request rather than the two
+roles separately, so the planner validates the combined width against
+``min_series`` and ``max_series``, and the request shape against ``n_input``
+and ``n_output``, before anything is sent — callers then see a clear, local
 exception instead of a service-side validation error.
 """
 
@@ -27,23 +27,20 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-import logging
 
 from jointfm_client.contract import ColumnSpec, HealthMetadata
 from jointfm_client.exceptions import JointFMCapacityError
-
-_LOGGER = logging.getLogger("jointfm_client.capabilities")
 
 
 @dataclass(frozen=True, slots=True)
 class ForecastPlan:
     """Validated forecast request layout for one deployment.
 
-    ``feature_columns`` and ``target_columns`` reflect the column split after
-    any feature-to-target downgrade applied for ``max_features == 0``
-    deployments. ``columns`` is the matching ordered ``ColumnSpec`` list and
-    ``requested_columns`` is the caller's original target list, since callers
-    consistently want predictions for the conceptual targets they declared.
+    ``feature_columns`` and ``target_columns`` are the caller's split, carried
+    through unchanged — the deployment budgets the two together, so neither
+    role is ever rewritten to fit. ``columns`` is the matching ordered
+    ``ColumnSpec`` list and ``requested_columns`` is the caller's target list,
+    since callers consistently want predictions for the targets they declared.
     """
 
     columns: tuple[ColumnSpec, ...]
@@ -62,11 +59,10 @@ def plan_forecast_columns(
 ) -> ForecastPlan:
     """Plan a forecast request that fits the deployment's data-generation envelope.
 
-    Downgrades all ``feature_columns`` to target columns when the deployment
-    advertises ``max_features == 0`` and emits a warning on
-    ``jointfm_client.capabilities``. Raises :class:`JointFMCapacityError` when
-    the resulting column split, history length, or horizon count exceeds the
-    deployment's capacity. ``n_input`` and ``n_output`` are interpreted as the
+    Raises :class:`JointFMCapacityError` when the combined column count falls
+    outside ``[min_series, max_series]``, when the caller passed no target
+    column, when feature and target names overlap, or when the history length
+    or horizon count exceeds capacity. ``n_input`` and ``n_output`` are the
     largest history window and forecast horizon the deployed model was trained
     to handle; smaller requests are allowed.
     """
@@ -79,8 +75,7 @@ def plan_forecast_columns(
         )
 
     requested_columns = tuple(target_columns)
-    original_feature_list = list(feature_columns)
-    feature_list: list[str] = list(original_feature_list)
+    feature_list: list[str] = list(feature_columns)
     target_list: list[str] = list(target_columns)
     if not target_list:
         raise JointFMCapacityError(
@@ -94,23 +89,11 @@ def plan_forecast_columns(
             f"duplicates: {duplicate_names!r}"
         )
 
-    if capacity.max_features == 0 and feature_list:
-        _LOGGER.warning(
-            "Deployment advertises max_features=0; downgrading %d feature "
-            "column(s) to target columns: %s",
-            len(feature_list),
-            feature_list,
-        )
-        target_list = feature_list + target_list
-        feature_list = []
-
-    _check_column_capacity(
+    _check_series_capacity(
         feature_list,
         target_list,
-        capacity_min=capacity.min_features,
-        capacity_max=capacity.max_features,
-        target_min=capacity.min_targets,
-        target_max=capacity.max_targets,
+        min_series=capacity.min_series,
+        max_series=capacity.max_series,
     )
 
     if history_length <= 0:
@@ -162,34 +145,35 @@ def _find_duplicates(names: Sequence[str]) -> list[str]:
     return duplicates
 
 
-def _check_column_capacity(
+def _check_series_capacity(
     feature_list: Sequence[str],
     target_list: Sequence[str],
     *,
-    capacity_min: int,
-    capacity_max: int,
-    target_min: int,
-    target_max: int,
+    min_series: int,
+    max_series: int,
 ) -> None:
-    if len(feature_list) > capacity_max:
+    """Check the combined feature and target width against the series budget.
+
+    The deployment caps features and targets together, so the two lists are
+    reported jointly: a caller over budget needs to know which columns made up
+    the total, not merely that one role was too wide.
+    """
+    series_count = len(feature_list) + len(target_list)
+    if series_count > max_series:
         raise JointFMCapacityError(
-            f"Deployment supports at most max_features={capacity_max} feature "
-            f"column(s); got {len(feature_list)}: {list(feature_list)!r}"
+            f"Deployment supports at most max_series={max_series} series per "
+            f"request, counting features and targets together; got "
+            f"{series_count} ({len(feature_list)} feature(s) "
+            f"{list(feature_list)!r} + {len(target_list)} target(s) "
+            f"{list(target_list)!r}). Drop columns to fit the budget."
         )
-    if len(feature_list) < capacity_min:
+    if series_count < min_series:
         raise JointFMCapacityError(
-            f"Deployment requires at least min_features={capacity_min} feature "
-            f"column(s); got {len(feature_list)}: {list(feature_list)!r}"
-        )
-    if len(target_list) > target_max:
-        raise JointFMCapacityError(
-            f"Deployment supports at most max_targets={target_max} target "
-            f"column(s); got {len(target_list)}: {list(target_list)!r}"
-        )
-    if len(target_list) < target_min:
-        raise JointFMCapacityError(
-            f"Deployment requires at least min_targets={target_min} target "
-            f"column(s); got {len(target_list)}: {list(target_list)!r}"
+            f"Deployment requires at least min_series={min_series} series per "
+            f"request, counting features and targets together; got "
+            f"{series_count} ({len(feature_list)} feature(s) "
+            f"{list(feature_list)!r} + {len(target_list)} target(s) "
+            f"{list(target_list)!r})."
         )
 
 

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""JointFM V1 service contract constants, models, and compatibility checks."""
+"""JointFM service contract constants, models, and compatibility checks."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 # pyproject.toml the way a hand-maintained literal here did.
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
-SCHEMA_VERSION: Final = "v1"
+SCHEMA_VERSION: Final = "v2"
 DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE: Final = (
     "deployments/{deployment_id}/predictionsUnstructured"
 )
@@ -153,7 +153,7 @@ class ColumnSpec:
     time_value_timezone: str | None = None
 
     def __post_init__(self) -> None:
-        """Validate column metadata against the V1 service contract."""
+        """Validate column metadata against the service contract."""
         _require_string(self.name, field="columns.name")
         _require_member(
             self.modality,
@@ -304,7 +304,7 @@ class DataFrameSchema:
 
 @dataclass(frozen=True, slots=True)
 class ForecastRequestMetadata:
-    """Version and mode metadata for one V1 forecast request."""
+    """Version and mode metadata for one forecast request."""
 
     model_version: str
     schema_version: str = SCHEMA_VERSION
@@ -341,7 +341,7 @@ class ForecastRequestMetadata:
 
 @dataclass(frozen=True, slots=True)
 class ForecastRequest:
-    """Validated V1 forecast request that can build a `/predict` payload."""
+    """Validated forecast request that can build a `/predict` payload."""
 
     metadata: ForecastRequestMetadata
     schema: DataFrameSchema
@@ -360,7 +360,7 @@ class ForecastRequest:
         if not isinstance(self.schema, DataFrameSchema):
             raise ValueError("schema must be a DataFrameSchema")
         if self.query_row_ids is not None:
-            raise ValueError("query_row_ids is not supported for V1 forecast requests")
+            raise ValueError("query_row_ids is not supported for forecast requests")
 
         history_rows = _require_sequence(self.history_rows, field="history_rows")
         for index, history_row in enumerate(history_rows):
@@ -408,21 +408,19 @@ class ForecastRequest:
 class DataGenerationCapabilities:
     """Training-time data-generation envelope advertised by the deployment.
 
-    Mirrors the inference service's ``data_generation`` health block. The fields
-    define both the maximum width of one request (``max_features``,
-    ``max_targets``), the legacy minimum requirements (``min_features``,
-    ``min_targets``), the maximum history length the deployment was trained
-    to handle (``n_input``), and the maximum forecast horizon (``n_output``).
-    ``n_input`` and ``n_output`` are upper bounds; smaller requests are
-    accepted. A deployment with ``max_features == 0`` accepts only target
-    columns.
+    Mirrors the inference service's ``data_generation`` health block.
+    ``min_series`` and ``max_series`` bound the *total* width of one request —
+    feature and target columns counted together — because training draws that
+    total and then splits it randomly, guaranteeing only that at least one
+    column is a target. There is therefore no separate per-role cap: a request
+    is admissible on width alone. ``n_input`` is the longest history and
+    ``n_output`` the longest forecast horizon the deployment was trained to
+    handle; both are upper bounds, and smaller requests are accepted.
     """
 
     sampler_type: str
-    min_features: int
-    max_features: int
-    min_targets: int
-    max_targets: int
+    min_series: int
+    max_series: int
     t_input: float
     t_output: float
     n_input: int
@@ -430,28 +428,31 @@ class DataGenerationCapabilities:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
-        """Parse one ``data_generation`` block from a `/healthz` payload."""
+        """Parse one ``data_generation`` block from a `/healthz` payload.
+
+        Raises ``ValueError`` when a field is missing or malformed, or when the
+        series bounds are inverted — an envelope no request could satisfy.
+        """
+        min_series = _require_positive_int(
+            payload.get("min_series"),
+            field="data_generation.min_series",
+        )
+        max_series = _require_positive_int(
+            payload.get("max_series"),
+            field="data_generation.max_series",
+        )
+        if min_series > max_series:
+            raise ValueError(
+                "data_generation.min_series must not exceed "
+                f"data_generation.max_series; got {min_series} > {max_series}"
+            )
         return cls(
             sampler_type=_require_string(
                 payload.get("sampler_type"),
                 field="data_generation.sampler_type",
             ),
-            min_features=_require_non_negative_int(
-                payload.get("min_features"),
-                field="data_generation.min_features",
-            ),
-            max_features=_require_non_negative_int(
-                payload.get("max_features"),
-                field="data_generation.max_features",
-            ),
-            min_targets=_require_non_negative_int(
-                payload.get("min_targets"),
-                field="data_generation.min_targets",
-            ),
-            max_targets=_require_non_negative_int(
-                payload.get("max_targets"),
-                field="data_generation.max_targets",
-            ),
+            min_series=min_series,
+            max_series=max_series,
             t_input=_require_positive_float(
                 payload.get("t_input"),
                 field="data_generation.t_input",
@@ -696,7 +697,7 @@ class ForecastOutputs:
 
 @dataclass(frozen=True, slots=True)
 class ForecastResponse:
-    """Shared metadata preserved on every parsed V1 forecast result."""
+    """Shared metadata preserved on every parsed forecast result."""
 
     schema_version: str
     image_version: str
@@ -739,7 +740,7 @@ class ForecastResponse:
         *,
         request_payload: Mapping[str, Any] | None = None,
     ) -> "ForecastResponse":
-        """Parse one V1 forecast response into the concrete result class for its mode."""
+        """Parse one forecast response into the concrete result class for its mode."""
         _raise_for_response_errors(payload)
 
         expectations = _forecast_response_expectations(request_payload)
@@ -1082,7 +1083,7 @@ def build_forecast_payload(
     schema_version: str = SCHEMA_VERSION,
     query_mode: QueryMode = "forecast",
 ) -> dict[str, Any]:
-    """Build a validated JSON-compatible V1 forecast request payload."""
+    """Build a validated JSON-compatible forecast request payload."""
     return ForecastRequest(
         metadata=ForecastRequestMetadata(
             model_version=model_version,
@@ -1105,11 +1106,11 @@ def validate_service_metadata(
     *,
     expected_model_version: str | None = None,
 ) -> None:
-    """Validate `/healthz` metadata against the SDK's V1 compatibility policy.
+    """Validate `/healthz` metadata against the SDK's compatibility policy.
 
-    Requires schema ``v1``, the expected model version when supplied, the
-    advertised V1 query/return/time-index modes, and a supported
-    ``decoding_strategy``.
+    Requires the schema version in ``SCHEMA_VERSION``, the expected model
+    version when supplied, the advertised query/return/time-index modes,
+    and a supported ``decoding_strategy``.
     """
     schema_version = _required_string(metadata, "schema_version")
     if schema_version != SCHEMA_VERSION:
@@ -1174,7 +1175,7 @@ def _require_exact_values(
     field: str,
     supported_values: Sequence[str],
 ) -> None:
-    """Require one advertised capability list to match the SDK V1 contract."""
+    """Require one advertised capability list to match the SDK's service contract."""
     advertised_values = metadata.get(field)
     if not isinstance(advertised_values, Sequence) or isinstance(
         advertised_values, str | bytes | bytearray
@@ -1773,14 +1774,6 @@ def _require_positive_int(value: Any, *, field: str) -> int:
         raise ValueError(f"{field} must be an integer")
     if value <= 0:
         raise ValueError(f"{field} must be positive")
-    return value
-
-
-def _require_non_negative_int(value: Any, *, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field} must be an integer")
-    if value < 0:
-        raise ValueError(f"{field} must be non-negative")
     return value
 
 

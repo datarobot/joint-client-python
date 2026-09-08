@@ -75,9 +75,9 @@ def _health_metadata() -> dict[str, object]:
     """Health metadata."""
     return {
         "status": "ok",
-        "schema_version": "v1",
-        "image_version": "0.2.0",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
         "checkpoint_path": "/models/jointfm.pt",
         "device": "cpu",
@@ -94,10 +94,8 @@ def _health_metadata() -> dict[str, object]:
         "max_sample_count": 4096,
         "data_generation": {
             "sampler_type": "studentt",
-            "min_features": 0,
-            "max_features": 12,
-            "min_targets": 1,
-            "max_targets": 4,
+            "min_series": 1,
+            "max_series": 16,
             "t_input": 10.0,
             "t_output": 3.0,
             "n_input": 100,
@@ -111,7 +109,7 @@ def test_package_identity_contract() -> None:
     assert DISTRIBUTION_NAME == "jointfm-client"
     assert IMPORT_NAMESPACE == "jointfm_client"
     assert FIRST_SUPPORTED_PYTHON_VERSION == "3.11"
-    assert SCHEMA_VERSION == "v1"
+    assert SCHEMA_VERSION == "v2"
 
 
 def test_package_version_matches_installed_distribution() -> None:
@@ -254,7 +252,7 @@ def test_forecast_payload_matches_service_contract_without_mutating_inputs() -> 
     )
 
     payload = build_forecast_payload(
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         schema=schema,
         history_rows=history_rows,
         query_times=[timestamp, "2026-01-06T00:00:00Z"],
@@ -266,8 +264,8 @@ def test_forecast_payload_matches_service_contract_without_mutating_inputs() -> 
     )
 
     assert payload == {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "quantiles",
         "time_index_mode": "absolute_datetime",
@@ -312,13 +310,13 @@ def test_forecast_payload_preserves_non_datetime_query_values() -> None:
     history_rows = [{"target": 1.0}]
 
     ordinal_payload = build_forecast_payload(
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         schema=ordinal_schema,
         history_rows=history_rows,
         query_times=[1, 2],
     )
     continuous_payload = build_forecast_payload(
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         schema=continuous_schema,
         history_rows=history_rows,
         query_times=[1, 2.5],
@@ -348,7 +346,7 @@ def test_dataframe_payload_matches_service_forecast_request_shape() -> None:
 
     payload = build_forecast_payload_from_dataframe(
         frame,
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         time_index_mode="absolute_datetime",
         time_column="timestamp",
         columns=(
@@ -361,8 +359,8 @@ def test_dataframe_payload_matches_service_forecast_request_shape() -> None:
     )
 
     assert payload == {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "mean",
         "time_index_mode": "absolute_datetime",
@@ -479,7 +477,7 @@ def test_array_payload_builds_ordered_rows_with_metadata() -> None:
 
     payload = build_forecast_payload_from_arrays(
         np.array([[10.0, "low"], [11.0, "high"]], dtype=object),
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         columns=columns,
         time_index_mode="ordinal",
         query_times=[2, 3],
@@ -659,7 +657,7 @@ def test_array_adapter_rejects_invalid_shapes_and_time_values() -> None:
     with pytest.raises(ValueError, match="time_values are required"):
         build_forecast_payload_from_arrays(
             [[1.0]],
-            model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+            model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
             columns=columns,
             time_index_mode="continuous_float",
             query_times=[1.0],
@@ -703,7 +701,7 @@ def test_forecast_request_rejects_service_validation_edges() -> None:
         time_index_mode="ordinal",
     )
     metadata = ForecastRequestMetadata(
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
     )
 
     with pytest.raises(ValueError, match="history_rows"):
@@ -731,7 +729,7 @@ def test_forecast_request_rejects_service_validation_edges() -> None:
     with pytest.raises(ValueError, match="strictly between 0 and 1"):
         ForecastRequest(
             metadata=ForecastRequestMetadata(
-                model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+                model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
                 return_mode="quantiles",
             ),
             schema=schema,
@@ -749,7 +747,7 @@ def test_forecast_request_rejects_service_validation_edges() -> None:
         )
     with pytest.raises(ValueError, match="return_mode"):
         ForecastRequestMetadata(
-            model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+            model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
             return_mode=cast(Any, "median"),
         )
     with pytest.raises(ValueError, match="query_row_ids"):
@@ -776,9 +774,9 @@ def test_health_and_response_models_parse_current_payloads() -> None:
     health = HealthMetadata.from_payload(_health_metadata())
     response = ForecastResponse.from_payload(
         {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
+            "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
             "checkpoint_version": "smoke-1",
             "head": "dummy",
             "query_mode": "forecast",
@@ -795,7 +793,7 @@ def test_health_and_response_models_parse_current_payloads() -> None:
         }
     )
 
-    assert health.model_version == "jointfm-inference:0.2.0+ckpt.smoke-1"
+    assert health.model_version == "jointfm-inference:0.3.0+ckpt.smoke-1"
     assert health.decoding_strategy == "parallel_dense"
     assert isinstance(response, MeanForecastResult)
     assert response.requested_columns == ("target",)
@@ -805,13 +803,43 @@ def test_health_and_response_models_parse_current_payloads() -> None:
     assert response.errors == ()
 
 
+def test_health_metadata_parses_the_series_envelope() -> None:
+    """The data-generation block exposes one combined series budget."""
+    health = HealthMetadata.from_payload(_health_metadata())
+
+    assert health.data_generation is not None
+    assert health.data_generation.min_series == 1
+    assert health.data_generation.max_series == 16
+
+
+def test_health_metadata_rejects_missing_series_bounds() -> None:
+    """A deployment advertising no series bounds fails instead of guessing them."""
+    metadata = _health_metadata()
+    data_generation = cast(dict[str, object], metadata["data_generation"])
+    del data_generation["max_series"]
+
+    with pytest.raises(ValueError, match="data_generation.max_series"):
+        HealthMetadata.from_payload(metadata)
+
+
+def test_health_metadata_rejects_inverted_series_bounds() -> None:
+    """Bounds no request could satisfy are rejected at parse time."""
+    metadata = _health_metadata()
+    data_generation = cast(dict[str, object], metadata["data_generation"])
+    data_generation["min_series"] = 8
+    data_generation["max_series"] = 4
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        HealthMetadata.from_payload(metadata)
+
+
 def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -> None:
     """Forecast result conversion helpers cover mean samples and quantiles."""
     mean_result = ForecastResponse.from_payload(
         {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
+            "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
             "checkpoint_version": "smoke-1",
             "head": "dummy",
             "query_mode": "forecast",
@@ -829,9 +857,9 @@ def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -
     )
     sample_result = ForecastResponse.from_payload(
         {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
+            "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
             "checkpoint_version": "smoke-1",
             "head": "dummy",
             "query_mode": "forecast",
@@ -852,9 +880,9 @@ def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -
     )
     quantile_result = ForecastResponse.from_payload(
         {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
+            "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
             "checkpoint_version": "smoke-1",
             "head": "dummy",
             "query_mode": "forecast",
@@ -926,8 +954,8 @@ def test_forecast_result_conversion_helpers_cover_mean_samples_and_quantiles() -
 def test_forecast_response_validates_request_scoped_shapes() -> None:
     """Forecast response validates request scoped shapes."""
     request_payload = {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "samples",
         "query_times": [1, 2],
@@ -935,9 +963,9 @@ def test_forecast_response_validates_request_scoped_shapes() -> None:
         "n_samples": 3,
     }
     response_payload = {
-        "schema_version": "v1",
-        "image_version": "0.2.0",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
         "head": "dummy",
         "query_mode": "forecast",
@@ -965,9 +993,9 @@ def test_forecast_response_raises_typed_error_for_success_payload_errors() -> No
     with pytest.raises(JointFMServiceError) as exc_info:
         ForecastResponse.from_payload(
             {
-                "schema_version": "v1",
-                "image_version": "0.2.0",
-                "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+                "schema_version": "v2",
+                "image_version": "0.3.0",
+                "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
                 "checkpoint_version": "smoke-1",
                 "head": "dummy",
                 "query_mode": "forecast",
@@ -995,14 +1023,14 @@ def test_validate_service_metadata_accepts_current_v1_contract() -> None:
     """Validate service metadata accepts current v1 contract."""
     validate_service_metadata(
         _health_metadata(),
-        expected_model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        expected_model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
     )
 
 
 def test_validate_service_metadata_rejects_schema_mismatch() -> None:
     """Validate service metadata rejects schema mismatch."""
     metadata = _health_metadata()
-    metadata["schema_version"] = "v2"
+    metadata["schema_version"] = "v3"
 
     with pytest.raises(UnsupportedSchemaVersionError, match="schema_version"):
         validate_service_metadata(metadata)
@@ -1131,9 +1159,9 @@ def test_forecast_convenience_methods_share_forecast_path() -> None:
     def _forecast_response_payload(*, return_mode: str) -> dict[str, object]:
         """Forecast response payload."""
         return {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
-            "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
+            "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
             "checkpoint_version": "smoke-1",
             "head": "dummy",
             "query_mode": "forecast",
@@ -1164,7 +1192,7 @@ def test_forecast_convenience_methods_share_forecast_path() -> None:
         time_index_mode="ordinal",
     )
     history_rows = [{"target": 1.0}]
-    model_version = "jointfm-inference:0.2.0+ckpt.smoke-1"
+    model_version = "jointfm-inference:0.3.0+ckpt.smoke-1"
 
     assert (
         client.forecast_mean(

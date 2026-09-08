@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Public synchronous client shape for JointFM V1."""
+"""Public synchronous client shape for JointFM."""
 
 from __future__ import annotations
 
@@ -263,7 +263,7 @@ class JointFMClient:
         )
 
     def predict(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
-        """Submit one V1 JSON prediction payload to the configured endpoint."""
+        """Submit one JSON prediction payload to the configured endpoint."""
         self._require_predict_url("predict")
         model_version = payload.get("model_version")
         if not isinstance(model_version, str):
@@ -607,7 +607,7 @@ class JointFMClient:
         )
         if not isinstance(result, SampleForecastResult):
             raise JointFMServiceError(
-                "JointFM forecast response violated the V1 contract: "
+                "JointFM forecast response violated the service contract: "
                 "feature_importance requires sample forecast responses"
             )
         return result
@@ -711,7 +711,7 @@ class JointFMClient:
             return _merge_sample_forecast_results(batch_results, payload)
         except ValueError as error:
             raise JointFMServiceError(
-                f"JointFM forecast response violated the V1 contract: {error}"
+                f"JointFM forecast response violated the service contract: {error}"
             ) from error
 
     def _forecast_sample_batches_parallel(
@@ -748,7 +748,7 @@ class JointFMClient:
         batch_result = _forecast_response_from_payload(response_payload, batch_payload)
         if not isinstance(batch_result, SampleForecastResult):
             raise JointFMServiceError(
-                "JointFM forecast response violated the V1 contract: "
+                "JointFM forecast response violated the service contract: "
                 "sample batching requires sample forecast responses"
             )
         return batch_result
@@ -978,7 +978,7 @@ def _forecast_response_from_payload(
         raise
     except ValueError as error:
         raise JointFMServiceError(
-            f"JointFM forecast response violated the V1 contract: {error}"
+            f"JointFM forecast response violated the service contract: {error}"
         ) from error
 
 

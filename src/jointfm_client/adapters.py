@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DataFrame and array adapters for JointFM V1 forecast requests."""
+"""DataFrame and array adapters for JointFM forecast requests."""
 
 from __future__ import annotations
 

@@ -49,15 +49,15 @@ def _instance(deployment_id: str) -> JointFMInstanceSettings:
 
 def _health(
     *,
-    model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
+    model_version: str = "jointfm-inference:0.3.0+ckpt.sdk-test",
     checkpoint_version: str = "sdk-test",
     max_sample_count: int = 4096,
 ) -> dict[str, object]:
     """Health."""
     return {
         "status": "ok",
-        "schema_version": "v1",
-        "image_version": "0.2.0",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
         "model_version": model_version,
         "checkpoint_version": checkpoint_version,
         "checkpoint_path": "/models/jointfm.pt",
@@ -133,7 +133,7 @@ def test_pool_retries_next_instance_on_470() -> None:
     pool = _pool(transport=_Transport(fail_ids=frozenset({"a"})))
     assert pool.next_instance().deployment_id == "a"
     assert pool.next_instance().deployment_id == "b"
-    assert pool.post_json({"schema_version": "v1"}) == {
+    assert pool.post_json({"schema_version": "v2"}) == {
         "ok": True,
         "deployment_id": "b",
     }
@@ -143,7 +143,7 @@ def test_pool_raises_when_all_instances_unavailable() -> None:
     """Pool raises when all instances unavailable."""
     pool = _pool(transport=_Transport(fail_ids=frozenset({"a", "b"})))
     with pytest.raises(JointFMHTTPStatusError, match="unavailable"):
-        pool.post_json({"schema_version": "v1"})
+        pool.post_json({"schema_version": "v2"})
 
 
 def test_pool_health_rejects_mismatch_and_aligns_sample_cap() -> None:
@@ -274,7 +274,7 @@ def test_pool_posts_concurrent_across_peers() -> None:
             executor.submit(
                 pool.post_json_to,
                 pool.instance_at(index),
-                {"schema_version": "v1"},
+                {"schema_version": "v2"},
             )
             for index in range(2)
         ]
@@ -298,7 +298,7 @@ def test_pool_health_routes_only_reachable_peers() -> None:
     assert pool.instance_at(0).deployment_id == "b"
     assert pool.instance_at(1).deployment_id == "b"
     assert pool.next_instance().deployment_id == "b"
-    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "b"
+    assert pool.post_json({"schema_version": "v2"})["deployment_id"] == "b"
 
 
 def test_pool_failover_retries_health_excluded_peer() -> None:
@@ -312,13 +312,13 @@ def test_pool_failover_retries_health_excluded_peer() -> None:
     assert pool.instance_at(0).deployment_id == "b"
 
     transport.fail_ids = frozenset({"b"})
-    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "a"
+    assert pool.post_json({"schema_version": "v2"})["deployment_id"] == "a"
     assert pool.instance_at(0).deployment_id == "a"
 
 
 def test_pool_health_skips_incompatible_peer_when_another_matches_pin() -> None:
     """A pinned-incompatible backup is skipped; the matching primary stays usable."""
-    pinned = "jointfm-inference:0.2.0+ckpt.sdk-test"
+    pinned = "jointfm-inference:0.3.0+ckpt.sdk-test"
     pool = _pool(
         transport=_Transport(
             health_by_id={
@@ -332,7 +332,7 @@ def test_pool_health_skips_incompatible_peer_when_another_matches_pin() -> None:
     assert metadata.model_version == pinned
     assert pool.instance_at(0).deployment_id == "a"
     assert pool.instance_at(1).deployment_id == "a"
-    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "a"
+    assert pool.post_json({"schema_version": "v2"})["deployment_id"] == "a"
 
 
 def test_pool_cooldown_restores_peer_after_transient_failure(
@@ -344,7 +344,7 @@ def test_pool_cooldown_restores_peer_after_transient_failure(
     transport = _Transport(fail_ids=frozenset({"a"}))
     pool = _pool(transport=transport, peer_cooldown_seconds=10.0)
 
-    assert pool.post_json({"schema_version": "v1"})["deployment_id"] == "b"
+    assert pool.post_json({"schema_version": "v2"})["deployment_id"] == "b"
     assert pool.instance_at(0).deployment_id == "b"
     assert pool.instance_at(1).deployment_id == "b"
 
@@ -354,4 +354,4 @@ def test_pool_cooldown_restores_peer_after_transient_failure(
 
     clock["now"] = 110.0
     assert {pool.instance_at(i).deployment_id for i in range(2)} == {"a", "b"}
-    assert pool.post_json({"schema_version": "v1"})["deployment_id"] in {"a", "b"}
+    assert pool.post_json({"schema_version": "v2"})["deployment_id"] in {"a", "b"}

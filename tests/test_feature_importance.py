@@ -27,7 +27,7 @@ from jointfm_client.feature_importance import (
     sample_w2_distance,
 )
 
-_MODEL_VERSION = "jointfm-inference:0.2.0+ckpt.sdk-test"
+_MODEL_VERSION = "jointfm-inference:0.3.0+ckpt.sdk-test"
 
 
 class _ImportanceTransport:
@@ -47,8 +47,8 @@ class _ImportanceTransport:
         self.payloads.append(dict(payload))
         samples = self.sample_batches[len(self.payloads) - 1]
         return {
-            "schema_version": "v1",
-            "image_version": "0.2.0",
+            "schema_version": "v2",
+            "image_version": "0.3.0",
             "model_version": _MODEL_VERSION,
             "checkpoint_version": "sdk-test",
             "head": "studentt",

@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-import logging
 from typing import Any
 
 import pytest
@@ -36,10 +35,8 @@ def _capabilities(**overrides: Any) -> DataGenerationCapabilities:
     """Build a permissive capabilities object that tests override per case."""
     defaults: dict[str, Any] = {
         "sampler_type": "studentt",
-        "min_features": 0,
-        "max_features": 12,
-        "min_targets": 1,
-        "max_targets": 4,
+        "min_series": 1,
+        "max_series": 16,
         "t_input": 10.0,
         "t_output": 3.0,
         "n_input": 100,
@@ -120,26 +117,22 @@ def test_plan_forecast_columns_preserves_features_when_supported(
     )
 
 
-def test_plan_forecast_columns_downgrades_features_when_max_features_is_zero(
+def test_plan_forecast_columns_spends_one_budget_across_both_roles(
     json_fixture_loader: Callable[[str], dict[str, Any]],
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Plan forecast columns downgrades features when max features is zero."""
+    """A split that fits only when both roles share one budget is admitted."""
     health = _health(
         json_fixture_loader,
         data_generation={
             "sampler_type": "studentt",
-            "min_features": 0,
-            "max_features": 0,
-            "min_targets": 1,
-            "max_targets": 5,
+            "min_series": 1,
+            "max_series": 5,
             "t_input": 10.0,
             "t_output": 3.0,
             "n_input": 100,
             "n_output": 10,
         },
     )
-    caplog.set_level(logging.WARNING, logger="jointfm_client.capabilities")
 
     plan = plan_forecast_columns(
         health=health,
@@ -149,31 +142,26 @@ def test_plan_forecast_columns_downgrades_features_when_max_features_is_zero(
         query_times_length=10,
     )
 
-    assert plan.feature_columns == ()
-    assert plan.target_columns == (
+    # Both roles survive as declared: the envelope budgets width, not roles.
+    assert plan.feature_columns == (
         "equity_index_level",
         "treasury_10y_yield",
         "eur_usd_rate",
-        "portfolio_nav",
-        "realized_volatility",
     )
-    assert plan.requested_columns == ("portfolio_nav", "realized_volatility")
-    assert all(column.role == "target" for column in plan.columns)
-    assert any("max_features=0" in record.message for record in caplog.records)
+    assert plan.target_columns == ("portfolio_nav", "realized_volatility")
+    assert len(plan.columns) == 5
 
 
-def test_plan_forecast_columns_raises_when_targets_exceed_capacity_after_downgrade(
+def test_plan_forecast_columns_raises_when_combined_width_exceeds_max_series(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """Plan forecast columns raises when targets exceed capacity after downgrade."""
+    """Features and targets are counted together against ``max_series``."""
     health = _health(
         json_fixture_loader,
         data_generation={
             "sampler_type": "studentt",
-            "min_features": 0,
-            "max_features": 0,
-            "min_targets": 1,
-            "max_targets": 3,
+            "min_series": 1,
+            "max_series": 3,
             "t_input": 10.0,
             "t_output": 3.0,
             "n_input": 100,
@@ -181,7 +169,9 @@ def test_plan_forecast_columns_raises_when_targets_exceed_capacity_after_downgra
         },
     )
 
-    with pytest.raises(JointFMCapacityError, match="max_targets=3"):
+    # Neither role alone exceeds 3; their sum does. Under the old per-role caps
+    # this request was admissible, which is exactly the regression to guard.
+    with pytest.raises(JointFMCapacityError, match="max_series=3"):
         plan_forecast_columns(
             health=health,
             feature_columns=["a", "b"],
@@ -256,18 +246,16 @@ def test_plan_forecast_columns_raises_when_data_generation_missing(
         )
 
 
-def test_plan_forecast_columns_enforces_min_targets(
+def test_plan_forecast_columns_enforces_min_series(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """Plan forecast columns enforces min targets."""
+    """A request narrower than the deployment's minimum width is rejected."""
     health = _health(
         json_fixture_loader,
         data_generation={
             "sampler_type": "studentt",
-            "min_features": 0,
-            "max_features": 12,
-            "min_targets": 2,
-            "max_targets": 4,
+            "min_series": 4,
+            "max_series": 12,
             "t_input": 10.0,
             "t_output": 3.0,
             "n_input": 100,
@@ -275,7 +263,7 @@ def test_plan_forecast_columns_enforces_min_targets(
         },
     )
 
-    with pytest.raises(JointFMCapacityError, match="min_targets=2"):
+    with pytest.raises(JointFMCapacityError, match="min_series=4"):
         plan_forecast_columns(
             health=health,
             feature_columns=["a", "b"],
