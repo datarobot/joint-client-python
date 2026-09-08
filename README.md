@@ -1,6 +1,6 @@
 # JointFM Python SDK
 
-`jointfm-client` is the Python SDK package for callers of the JointFM REST API. The import namespace is `jointfm_client`, and the first supported Python version is Python 3.13.
+`jointfm-client` is the Python SDK package for callers of the JointFM REST API. The import namespace is `jointfm_client`, and the first supported Python version is Python 3.11.
 
 The SDK targets the DataRobot-hosted unstructured prediction route and the same direct local service contract used by the JointFM inference container. Public code for the contract lives in `jointfm_client.contract`; the README mirrors it for package users.
 
@@ -8,13 +8,13 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 
 - Distribution package: `jointfm-client`
 - Import namespace: `jointfm_client`
-- Supported Python: `>=3.13`
+- Supported Python: `>=3.11`
 - Current SDK package version: `0.4.1`
 - Current JointFM service schema: `schema_version="v1"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
-SDK package versions are standard Python distribution versions: `[project].version` in `pyproject.toml` and `jointfm_client.__version__` describe the released client library. JointFM `schema_version`, `image_version`, `model_version`, and `checkpoint_version` are service compatibility identifiers carried in configuration, health metadata, requests, and responses. They are not SDK package versions, and changing a deployment pin does not by itself require changing the SDK package version.
+SDK package versions are standard Python distribution versions: `[project].version` in `pyproject.toml` is the single declared value, and `jointfm_client.__version__` reports it back from the installed distribution metadata. JointFM `schema_version`, `image_version`, `model_version`, and `checkpoint_version` are service compatibility identifiers carried in configuration, health metadata, requests, and responses. They are not SDK package versions, and changing a deployment pin does not by itself require changing the SDK package version.
 
 See [docs/api-reference.md](docs/api-reference.md) for the checked-in API reference covering public classes, functions, exceptions, environment variables, and V1 payload fields.
 
@@ -408,7 +408,7 @@ task release:publish  # push the bump commit and the tag
 - reads commits since the last `v*` tag,
 - picks the SemVer bump from the types it sees,
 - updates `CHANGELOG.md`,
-- bumps `version =` in `pyproject.toml`, `__version__` in `src/jointfm_client/__init__.py`, and the "Current SDK package version" line in this README,
+- bumps `version =` in `pyproject.toml` and the "Current SDK package version" line in this README,
 - commits the bump and creates the annotated tag.
 
 Publishing is a separate task on purpose, so you can inspect the inferred bump before anything leaves your machine — Commitizen derives the version from commit messages, and a stray `feat:` where you meant `fix:` is only fixable while the release is still local. Override the inferred bump level when needed: `task release -- --increment minor`.
@@ -426,7 +426,9 @@ After pulling these changes for the first time, run `uv run pre-commit install` 
 
 ### Hand-editing the version (don't)
 
-The `version =` line in [`pyproject.toml`](pyproject.toml), `__version__` in [`src/jointfm_client/__init__.py`](src/jointfm_client/__init__.py), and the "Current SDK package version" line in this README are **owned by `cz bump`** — treat them the way you'd treat a lockfile. Each release rewrites all of them atomically.
+The `version =` line in [`pyproject.toml`](pyproject.toml) and the "Current SDK package version" line in this README are **owned by `cz bump`** — treat them the way you'd treat a lockfile. Each release rewrites both of them atomically.
+
+Nothing in the package source carries a version literal: `jointfm_client.contract.PACKAGE_VERSION` reads the installed distribution metadata that the build backend generates from `[project].version`, and `jointfm_client.__version__` is that same value. They follow a bump automatically, so there is nothing to hand-edit and nothing that can drift.
 
 If you hand-edit them, the next `task release` will catch you:
 

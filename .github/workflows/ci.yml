@@ -62,3 +62,6 @@ jobs:
 
             - name: Run task pre-commit
               run: task pre-commit
+
+            - name: Build and validate distribution
+              run: task build

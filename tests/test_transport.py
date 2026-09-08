@@ -31,6 +31,7 @@ import jointfm_client.client as client_module
 from jointfm_client import (
     ColumnSpec,
     DataFrameSchema,
+    DISTRIBUTION_NAME,
     ForecastResponse,
     HealthMetadata,
     JointFMClient,
@@ -50,6 +51,7 @@ from jointfm_client import (
     UnsupportedModelVersionError,
     UnsupportedServiceContractError,
 )
+from jointfm_client.contract import PACKAGE_VERSION
 
 
 class StaticResponseAdapter(BaseAdapter):
@@ -241,7 +243,7 @@ def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
     assert request_headers["Authorization"] == "Bearer secret-token"
     assert request_headers["Accept"] == "application/json"
     assert request_headers["Content-Type"] == "application/json;charset=UTF-8"
-    assert request_headers["User-Agent"] == "jointfm-client/0.0.1"
+    assert request_headers["User-Agent"] == f"{DISTRIBUTION_NAME}/{PACKAGE_VERSION}"
     assert adapter.kwargs[0]["timeout"] == (1.5, 2.5)
     request_body = request.body
     assert isinstance(request_body, bytes)
@@ -303,7 +305,7 @@ def test_transport_from_local_settings_omits_hosted_auth_headers() -> None:
     assert result == {"ok": True}
     request_headers = dict(adapter.requests[0].headers or {})
     assert "Authorization" not in request_headers
-    assert request_headers["User-Agent"] == "jointfm-client/0.0.1"
+    assert request_headers["User-Agent"] == f"{DISTRIBUTION_NAME}/{PACKAGE_VERSION}"
 
 
 def test_transport_retries_retryable_server_responses() -> None:
