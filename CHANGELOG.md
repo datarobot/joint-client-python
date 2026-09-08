@@ -10,6 +10,12 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.7.0 (2026-09-08)
+
+### Feat
+
+- Model and schema update (#14)
+
 ## v0.6.0 (2026-09-08)
 
 ### Feat
