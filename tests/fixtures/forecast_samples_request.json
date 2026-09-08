@@ -1,6 +1,6 @@
 {
-  "schema_version": "v1",
-  "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+  "schema_version": "v2",
+  "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
   "query_mode": "forecast",
   "return_mode": "samples",
   "time_index_mode": "ordinal",

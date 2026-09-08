@@ -70,7 +70,7 @@ def test_hosted_surface_uses_datarobot_routes_and_auth_headers(
             health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="deployment_id",
-            schema_version="v1",
+            schema_version="v2",
             model_version=request_payload["model_version"],
             deployment_id="deployment-id",
         )
@@ -209,7 +209,7 @@ def test_hosted_surface_auto_discovers_model_version_when_settings_unpinned(
             health_url=predict_url,
             predict_url=predict_url,
             deployment_selector="deployment_id",
-            schema_version="v1",
+            schema_version="v2",
             deployment_id="deployment-id",
         )
         assert settings.model_version is None

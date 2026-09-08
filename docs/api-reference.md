@@ -21,8 +21,8 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | `HealthMetadata` | Typed service-health payload with service status, schema and model versions, checkpoint metadata, device, head, `decoding_strategy`, advertised modes, time-index encoding, `max_sample_count`, and an optional `data_generation` block carrying advertised capacity limits. The container exposes it on `GET /healthz` for direct local access and as the response to `POST {"request_type": "health"}` on the unstructured prediction route for DataRobot-hosted deployments. Each endpoint reports only its own capabilities. |
 | `InstanceHealth` | One configured deployment's probe outcome: `deployment_id`, optional `metadata` (`HealthMetadata` when reachable), and optional `error` when the peer was skipped. |
 | `HealthInstances` | Client aggregation of `health_instances()`: `instances` (one `InstanceHealth` per configured ID), `max_sample_count` (sum of reachable caps = overall parallel capacity), `topology` as `(count, cap)` pairs sorted by descending cap, and `topology_label` such as `2x5000` or `1x7000, 1x3000`. Unavailable peers stay in `instances` but are omitted from the sum and topology. |
-| `DataGenerationCapabilities` | Optional service-health block describing the deployed checkpoint's data-generation capacity. Fields are `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
-| `ForecastPlan` | Validated forecast plan returned by `plan_forecast_columns`. Fields are `columns` (ordered `ColumnSpec` tuple), `feature_columns`, `target_columns` (both reflect post-downgrade roles), and `requested_columns` (the caller's original target list). |
+| `DataGenerationCapabilities` | Optional service-health block describing the deployed checkpoint's data-generation capacity. Fields are `sampler_type`, `min_series`, `max_series`, `t_input`, `t_output`, `n_input`, and `n_output`. `min_series` and `max_series` bound the total number of series in one request, features and targets counted together — there is no separate per-role cap. |
+| `ForecastPlan` | Validated forecast plan returned by `plan_forecast_columns`. Fields are `columns` (ordered `ColumnSpec` tuple), `feature_columns`, `target_columns` (both as the caller declared them), and `requested_columns` (the caller's target list). |
 | `StructuredError` | One structured JointFM service error with `code`, `message`, and optional `field`. |
 | `ForecastDiagnostics` | Response diagnostics containing `history_rows`, `horizon_count`, and optional `seed`. |
 | `QuantileForecast` | One quantile surface with `quantile` and `values`; `to_numpy()` returns axis order `(horizon, column)`. |
@@ -73,9 +73,9 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JointFMHTTPStatusError` | The service returns an HTTP error status. |
 | `JointFMServiceError` | A response body contains non-empty JointFM `errors`, including the case where HTTP status unexpectedly succeeded. |
 | `JointFMCompatibilityError` | Base class for fail-fast service compatibility failures. |
-| `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v1`. |
+| `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v2`. |
 | `UnsupportedModelVersionError` | The service or response model version differs from the configured or requested version. |
-| `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities or a `decoding_strategy` outside the recorded V1 contract. |
+| `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities or a `decoding_strategy` outside the recorded V2 contract. |
 
 ## Public Functions
 
@@ -97,8 +97,8 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `build_local_health_url(service_base_url)` | Build a direct local service `/healthz` URL. |
 | `build_local_predict_url(service_base_url)` | Build a direct local service `/predict` URL. |
 | `build_datarobot_prediction_headers(api_token)` | Build hosted prediction headers: bearer authorization, broad accept header, and JSON content type. |
-| `build_forecast_payload(...)` | Build a validated JSON-compatible V1 forecast payload from explicit schema, history rows, query times, and return-mode controls. |
-| `validate_service_metadata(metadata, expected_model_version=None)` | Validate the service-health metadata against schema `v1`, the expected model when supplied, advertised V1 mode capabilities, and a supported `decoding_strategy`. |
+| `build_forecast_payload(...)` | Build a validated JSON-compatible V2 forecast payload from explicit schema, history rows, query times, and return-mode controls. |
+| `validate_service_metadata(metadata, expected_model_version=None)` | Validate the service-health metadata against schema `v2`, the expected model when supplied, advertised V2 mode capabilities, and a supported `decoding_strategy`. |
 | `infer_column_specs_from_dataframe(frame, ...)` | Infer ordered `ColumnSpec` objects from a pandas `DataFrame` and explicit role, modality, mapping, nullability, time-value, and bounds hints. |
 | `dataframe_to_history_rows(frame, schema)` | Convert a pandas `DataFrame` into server-compatible `history_rows`. |
 | `arrays_to_history_rows(values, columns=..., ...)` | Convert a two-dimensional NumPy-like array plus column metadata into `history_rows`. |
@@ -110,7 +110,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `validate_forecast_horizon(history_times, query_times, time_index_mode=...)` | Validate that query times are future, increasing, and encoded for the selected time-index mode. |
 | `resolve_notebook_project_root(start_dir=None)` | Resolve the nearest src-layout Python project root for notebooks started inside a repository tree. |
 | `bootstrap_notebook(add_src_root=False)` | Switch notebook working directory to the project root and optionally prepend the local `src` directory. |
-| `plan_forecast_columns(*, health, feature_columns, target_columns, history_length, query_times_length)` | Build a `ForecastPlan` from `HealthMetadata`. Caps `history_length` at `data_generation.n_input` and `query_times_length` at `n_output` (both upper bounds; smaller requests are allowed), enforces feature and target count bounds, rejects duplicate column names, and downgrades all feature columns to targets (with a warning) when the deployed checkpoint advertises `max_features=0`. Raises `JointFMCapacityError` when any bound is exceeded or required metadata is missing. |
+| `plan_forecast_columns(*, health, feature_columns, target_columns, history_length, query_times_length)` | Build a `ForecastPlan` from `HealthMetadata`. Caps `history_length` at `data_generation.n_input` and `query_times_length` at `n_output` (both upper bounds; smaller requests are allowed), checks the combined feature and target count against `data_generation.min_series` and `max_series`, and rejects duplicate column names. Raises `JointFMCapacityError` when any bound is exceeded or required metadata is missing. |
 
 ## Environment Variables
 
@@ -118,7 +118,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | --- | --- | --- |
 | `DATAROBOT_ENDPOINT` | Hosted calls | HTTPS DataRobot API v2 endpoint, normalized without a trailing slash and required to end in `/api/v2`. |
 | `DATAROBOT_API_TOKEN` | Hosted calls | Non-empty, whitespace-free API token used in the hosted bearer authorization header. |
-| `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v1`. |
+| `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v2`. |
 | `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
 | `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing (at least two unique IDs). Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`. `health()` uses the minimum reachable `max_sample_count` as the sample-batch cap; `health_instances()` sums reachable caps for overall parallel capacity and reports topology. |
@@ -131,7 +131,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 
 Set exactly one selector among `JOINTFM_DEPLOYMENT_ID`, `JOINTFM_DEPLOYMENT_IDS`, `JOINTFM_DEPLOYMENT_URL`, `JOINTFM_PREDICT_URL`, `JOINTFM_DEPLOYMENT_TARGET`, and `JOINTFM_LOCAL_BASE_URL`.
 
-## V1 Payload Fields
+## V2 Payload Fields
 
 ### Request Type Discriminator
 
@@ -139,7 +139,7 @@ Every container request body carries an optional top-level `request_type` field 
 
 | Value | Description |
 | --- | --- |
-| `"predict"` (default when omitted) | Standard V1 forecast request; the rest of the fields in the table below are required. |
+| `"predict"` (default when omitted) | Standard V2 forecast request; the rest of the fields in the table below are required. |
 | `"health"` | Minimal probe; the container returns the same payload it serves on `GET /healthz`. The SDK uses this for hosted DataRobot deployments because DataRobot's deployment gateway only proxies the unstructured prediction route. |
 
 The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`, and the validated tuple `SUPPORTED_REQUEST_TYPES`.
@@ -149,7 +149,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | Field | Required | Description |
 | --- | --- | --- |
 | `request_type` | Optional | One of `"predict"` (default) or `"health"`. Forecast requests omit this field or set it to `"predict"`. |
-| `schema_version` | Yes | Must be `"v1"`. |
+| `schema_version` | Yes | Must be `"v2"`. |
 | `model_version` | Yes | Exact deployed model version expected by the caller. |
 | `query_mode` | Yes | Must be `"forecast"`. |
 | `return_mode` | Yes | One of `"mean"`, `"samples"`, `"quantiles"`, or `"log_prob"`. The high-level `forecast_mean`, `forecast_samples`, and `forecast_quantiles` helpers cover the first three; `"log_prob"` is reachable through the low-level `predict(payload)` path. |
@@ -190,7 +190,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 
 | Field | Description |
 | --- | --- |
-| `schema_version` | Response schema, expected to be `"v1"`. |
+| `schema_version` | Response schema, expected to be `"v2"`. |
 | `image_version` | Service image version that produced the response. |
 | `model_version` | Model version that produced the response. |
 | `checkpoint_version` | Checkpoint version that produced the response. |
@@ -212,7 +212,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | Field | Description |
 | --- | --- |
 | `status` | Service status string. |
-| `schema_version` | Advertised schema version. The SDK requires `v1`. |
+| `schema_version` | Advertised schema version. The SDK requires `v2`. |
 | `image_version` | Running service image version. |
 | `model_version` | Running model version. |
 | `checkpoint_version` | Loaded checkpoint version. |
@@ -220,12 +220,12 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `device` | Device used by inference. |
 | `head` | Active forecast head. |
 | `decoding_strategy` | Horizon decoding mode advertised by the mounted model. Must be one of `SUPPORTED_DECODING_STRATEGIES`: `parallel_dense`, `parallel_scalable`, or `autoregressive`. Parallel strategies decode every horizon in one pass; `autoregressive` rolls horizons sequentially. |
-| `supported_query_modes` | Must match the SDK V1 query modes. |
-| `supported_return_modes` | Must match the SDK V1 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
-| `supported_time_index_modes` | Must match the SDK V1 time-index modes. |
+| `supported_query_modes` | Must match the SDK V2 query modes. |
+| `supported_return_modes` | Must match the SDK V2 return modes (`mean`, `samples`, `quantiles`, `log_prob`). |
+| `supported_time_index_modes` | Must match the SDK V2 time-index modes. |
 | `time_index_encoding` | Time-index encoding advertised by the service. |
 | `max_sample_count` | Maximum sample-count budget the service accepts in a single prediction. The client reads it during health probes and batches oversized sample requests locally, so the service never has to reject them. |
-| `data_generation` | Optional capability block describing the deployed checkpoint's advertised data-generation capacity. Absent on legacy checkpoints; present payloads expose `sampler_type`, `min_features`, `max_features`, `min_targets`, `max_targets`, `t_input`, `t_output`, `n_input`, and `n_output`. |
+| `data_generation` | Optional capability block describing the deployed checkpoint's advertised data-generation capacity. Absent on legacy checkpoints; present payloads expose `sampler_type`, `min_series`, `max_series`, `t_input`, `t_output`, `n_input`, and `n_output`. |
 
 ## Docstring Enforcement
 

@@ -148,14 +148,14 @@ class ErroringSession(requests.Session):
 
 def _health_payload(
     *,
-    model_version: str = "jointfm-inference:0.2.0+ckpt.sdk-test",
+    model_version: str = "jointfm-inference:0.3.0+ckpt.sdk-test",
     checkpoint_version: str = "sdk-test",
 ) -> dict[str, object]:
     """Health payload."""
     return {
         "status": "ok",
-        "schema_version": "v1",
-        "image_version": "0.2.0",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
         "model_version": model_version,
         "checkpoint_version": checkpoint_version,
         "checkpoint_path": "/models/jointfm.pt",
@@ -189,9 +189,9 @@ def _forecast_response_payload(*, return_mode: str = "mean") -> dict[str, object
         else None,
     }
     return {
-        "schema_version": "v1",
-        "image_version": "0.2.0",
-        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
+        "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
         "checkpoint_version": "sdk-test",
         "head": "studentt",
         "query_mode": "forecast",
@@ -233,7 +233,7 @@ def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
     session.mount("https://", adapter)
 
     result = transport.post_json(
-        "https://example.com/predict", {"schema_version": "v1"}
+        "https://example.com/predict", {"schema_version": "v2"}
     )
 
     assert result == {"ok": True}
@@ -247,7 +247,7 @@ def test_transport_posts_json_with_headers_timeout_and_user_agent() -> None:
     assert adapter.kwargs[0]["timeout"] == (1.5, 2.5)
     request_body = request.body
     assert isinstance(request_body, bytes)
-    assert json.loads(request_body.decode("utf-8")) == {"schema_version": "v1"}
+    assert json.loads(request_body.decode("utf-8")) == {"schema_version": "v2"}
 
 
 def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session() -> (
@@ -264,8 +264,8 @@ def test_transport_from_settings_attaches_hosted_auth_headers_and_closes_session
             "deployment-id/predictionsUnstructured"
         ),
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = JointFMHTTPTransport.from_settings(session=session, settings=settings)
@@ -292,8 +292,8 @@ def test_transport_from_local_settings_omits_hosted_auth_headers() -> None:
         health_url="http://127.0.0.1:8080/healthz",
         predict_url="http://127.0.0.1:8080/predict",
         deployment_selector="local_service",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.local-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.local-test",
         local_base_url="http://127.0.0.1:8080",
     )
     transport = JointFMHTTPTransport.from_settings(session=session, settings=settings)
@@ -318,7 +318,7 @@ def test_transport_retries_retryable_server_responses() -> None:
             retry_config=JointFMRetryConfig(max_attempts=2)
         )
 
-        result = transport.post_json(_server_url(server), {"schema_version": "v1"})
+        result = transport.post_json(_server_url(server), {"schema_version": "v2"})
 
         assert result == {"ok": True}
         assert handler.request_count == 2
@@ -350,7 +350,7 @@ def test_transport_retries_html_bodied_gateway_errors() -> None:
             ),
         )
 
-        result = transport.post_json(_server_url(server), {"schema_version": "v1"})
+        result = transport.post_json(_server_url(server), {"schema_version": "v2"})
 
         assert result == {"ok": True}
         assert handler.request_count == 2
@@ -379,7 +379,7 @@ def test_transport_raises_status_error_when_gateway_html_persists() -> None:
         )
 
         with pytest.raises(JointFMHTTPStatusError) as exc_info:
-            transport.post_json(_server_url(server), {"schema_version": "v1"})
+            transport.post_json(_server_url(server), {"schema_version": "v2"})
 
         assert exc_info.value.status_code == HTTPStatus.BAD_GATEWAY
         assert "502 Bad Gateway" in exc_info.value.response_body_excerpt
@@ -443,7 +443,7 @@ def test_transport_retries_connection_errors_via_tenacity() -> None:
     )
 
     result = transport.post_json(
-        "https://example.com/predict", {"schema_version": "v1"}
+        "https://example.com/predict", {"schema_version": "v2"}
     )
 
     assert result == {"ok": True}
@@ -462,7 +462,7 @@ def test_status_error_carries_parsed_retry_after_seconds() -> None:
         )
 
         with pytest.raises(JointFMHTTPStatusError) as exc_info:
-            transport.post_json(_server_url(server), {"schema_version": "v1"})
+            transport.post_json(_server_url(server), {"schema_version": "v2"})
 
         assert exc_info.value.retry_after_seconds == 0.5
         assert handler.request_count == 1
@@ -480,7 +480,7 @@ def test_transport_does_not_retry_validation_errors() -> None:
         )
 
         with pytest.raises(JointFMHTTPStatusError) as exc_info:
-            transport.post_json(_server_url(server), {"schema_version": "v1"})
+            transport.post_json(_server_url(server), {"schema_version": "v2"})
 
         assert exc_info.value.status_code == HTTPStatus.BAD_REQUEST
         assert exc_info.value.datarobot_request_id == "request-id-1"
@@ -506,7 +506,7 @@ def test_transport_rejects_non_json_serializable_payloads() -> None:
     with pytest.raises(JointFMRequestEncodingError, match="JSON-serializable"):
         transport.post_json(
             "https://example.com/predict",
-            {"schema_version": "v1", "bad": object()},
+            {"schema_version": "v2", "bad": object()},
         )
 
 
@@ -571,15 +571,15 @@ def test_client_predict_uses_configured_transport_and_settings() -> None:
         health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/healthz",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
     client = JointFMClient(settings=settings, transport=transport)
     payload = {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
     }
 
     result = client.predict(payload)
@@ -597,8 +597,8 @@ def test_client_health_returns_typed_metadata_and_caches_only_when_requested() -
         health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
@@ -628,8 +628,8 @@ def test_client_health_instances_returns_one_entry_for_single_endpoint() -> None
         health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
@@ -690,8 +690,8 @@ def test_client_from_env_forwards_timeout_and_retry_config(
             "DATAROBOT_ENDPOINT": "https://app.datarobot.com/api/v2",
             "DATAROBOT_API_TOKEN": "secret-token",
             "JOINTFM_DEPLOYMENT_ID": "deployment-id",
-            "JOINTFM_SCHEMA_VERSION": "v1",
-            "JOINTFM_MODEL_VERSION": "jointfm-inference:0.2.0+ckpt.sdk-test",
+            "JOINTFM_SCHEMA_VERSION": "v2",
+            "JOINTFM_MODEL_VERSION": "jointfm-inference:0.3.0+ckpt.sdk-test",
         },
         dotenv_path=None,
         timeout=timeout,
@@ -712,8 +712,8 @@ def test_client_health_rejects_cached_model_mismatch() -> None:
         health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
@@ -738,8 +738,8 @@ def test_client_hosted_health_posts_request_type_health_to_predict_url() -> None
         health_url=predict_url,
         predict_url=predict_url,
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
@@ -762,8 +762,8 @@ def test_client_local_health_keeps_get_request_to_healthz_route() -> None:
         health_url="http://127.0.0.1:8080/healthz",
         predict_url="http://127.0.0.1:8080/predict",
         deployment_selector="local_service",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         local_base_url="http://127.0.0.1:8080",
     )
     transport = RecordingTransport()
@@ -794,7 +794,7 @@ def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -
         schema=schema,
         query_times=[2],
         requested_columns=["target"],
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         seed=7,
     )
 
@@ -804,8 +804,8 @@ def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -
     assert result.outputs.mean == ((12.0,),)
     assert transport.predict_url == "http://localhost:8080/predict"
     assert transport.payload == {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
         "query_mode": "forecast",
         "return_mode": "mean",
         "time_index_mode": "ordinal",
@@ -882,7 +882,7 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
         schema=schema,
         query_times=[2],
         requested_columns=["target"],
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         n_samples=5,
         seed=7,
     )
@@ -904,7 +904,7 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
         schema=schema,
         query_times=[2],
         requested_columns=["target"],
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         n_samples=3,
         seed=11,
     )
@@ -979,8 +979,8 @@ def test_client_forecast_samples_batches_from_advertised_health_sample_cap() -> 
         health_url="http://127.0.0.1:8080/healthz",
         predict_url="http://127.0.0.1:8080/predict",
         deployment_selector="local_service",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         local_base_url="http://127.0.0.1:8080",
     )
     transport = HealthCapTransport()
@@ -1031,13 +1031,13 @@ def test_client_predict_raises_typed_service_error_for_success_payload_errors() 
         health_url="https://app.datarobot.com/api/v2/deployments/deployment-id/healthz",
         predict_url="https://app.datarobot.com/api/v2/deployments/deployment-id/predictionsUnstructured",
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
     transport = RecordingTransport()
     transport.predict_payload = {
-        "schema_version": "v1",
+        "schema_version": "v2",
         "errors": [
             {
                 "code": "VALIDATION_ERROR",
@@ -1051,7 +1051,7 @@ def test_client_predict_raises_typed_service_error_for_success_payload_errors() 
     with pytest.raises(JointFMServiceError) as exc_info:
         client.predict(
             {
-                "schema_version": "v1",
+                "schema_version": "v2",
                 "model_version": settings.model_version,
             }
         )
@@ -1088,9 +1088,9 @@ def test_client_forecast_uses_cached_health_model_version_and_validates_mismatch
         requested_columns=["target"],
     )
 
-    assert result.model_version == "jointfm-inference:0.2.0+ckpt.sdk-test"
+    assert result.model_version == "jointfm-inference:0.3.0+ckpt.sdk-test"
     assert transport.payload is not None
-    assert transport.payload["model_version"] == "jointfm-inference:0.2.0+ckpt.sdk-test"
+    assert transport.payload["model_version"] == "jointfm-inference:0.3.0+ckpt.sdk-test"
     with pytest.raises(UnsupportedModelVersionError, match="model_version"):
         client.forecast(
             [{"target": 10.0}, {"target": 11.0}],
@@ -1140,7 +1140,7 @@ def _start_json_server(
                 payload = {"ok": True}
             else:
                 payload = {
-                    "schema_version": "v1",
+                    "schema_version": "v2",
                     "errors": [
                         {
                             "code": "VALIDATION_ERROR",
@@ -1224,12 +1224,12 @@ def _pool_settings(primary: str, backup: str) -> JointFMSettings:
         health_url=primary,
         predict_url=primary,
         deployment_selector="deployment_ids",
-        schema_version="v1",
+        schema_version="v2",
         instances=(
             JointFMInstanceSettings(deployment_id="primary-id", predict_url=primary),
             JointFMInstanceSettings(deployment_id="backup-id", predict_url=backup),
         ),
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="primary-id",
     )
 
@@ -1266,8 +1266,8 @@ def test_client_pool_health_gate_and_round_robin() -> None:
     transport = PoolTransport()
     client = JointFMClient(settings=settings, transport=transport)
     payload = {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
     }
     client.predict(payload)
     client.predict(payload)
@@ -1344,7 +1344,7 @@ def test_client_pool_forecast_samples_batches_across_peers() -> None:
         schema=schema,
         query_times=[2],
         requested_columns=["target"],
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         n_samples=4,
         seed=7,
     )

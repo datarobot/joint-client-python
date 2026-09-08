@@ -37,7 +37,7 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 # pyproject.toml the way a hand-maintained literal here did.
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
-SCHEMA_VERSION: Final = "v1"
+SCHEMA_VERSION: Final = "v2"
 DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE: Final = (
     "deployments/{deployment_id}/predictionsUnstructured"
 )
@@ -408,21 +408,19 @@ class ForecastRequest:
 class DataGenerationCapabilities:
     """Training-time data-generation envelope advertised by the deployment.
 
-    Mirrors the inference service's ``data_generation`` health block. The fields
-    define both the maximum width of one request (``max_features``,
-    ``max_targets``), the legacy minimum requirements (``min_features``,
-    ``min_targets``), the maximum history length the deployment was trained
-    to handle (``n_input``), and the maximum forecast horizon (``n_output``).
-    ``n_input`` and ``n_output`` are upper bounds; smaller requests are
-    accepted. A deployment with ``max_features == 0`` accepts only target
-    columns.
+    Mirrors the inference service's ``data_generation`` health block.
+    ``min_series`` and ``max_series`` bound the *total* width of one request —
+    feature and target columns counted together — because training draws that
+    total and then splits it randomly, guaranteeing only that at least one
+    column is a target. There is therefore no separate per-role cap: a request
+    is admissible on width alone. ``n_input`` is the longest history and
+    ``n_output`` the longest forecast horizon the deployment was trained to
+    handle; both are upper bounds, and smaller requests are accepted.
     """
 
     sampler_type: str
-    min_features: int
-    max_features: int
-    min_targets: int
-    max_targets: int
+    min_series: int
+    max_series: int
     t_input: float
     t_output: float
     n_input: int
@@ -430,28 +428,31 @@ class DataGenerationCapabilities:
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
-        """Parse one ``data_generation`` block from a `/healthz` payload."""
+        """Parse one ``data_generation`` block from a `/healthz` payload.
+
+        Raises ``ValueError`` when a field is missing or malformed, or when the
+        series bounds are inverted — an envelope no request could satisfy.
+        """
+        min_series = _require_positive_int(
+            payload.get("min_series"),
+            field="data_generation.min_series",
+        )
+        max_series = _require_positive_int(
+            payload.get("max_series"),
+            field="data_generation.max_series",
+        )
+        if min_series > max_series:
+            raise ValueError(
+                "data_generation.min_series must not exceed "
+                f"data_generation.max_series; got {min_series} > {max_series}"
+            )
         return cls(
             sampler_type=_require_string(
                 payload.get("sampler_type"),
                 field="data_generation.sampler_type",
             ),
-            min_features=_require_non_negative_int(
-                payload.get("min_features"),
-                field="data_generation.min_features",
-            ),
-            max_features=_require_non_negative_int(
-                payload.get("max_features"),
-                field="data_generation.max_features",
-            ),
-            min_targets=_require_non_negative_int(
-                payload.get("min_targets"),
-                field="data_generation.min_targets",
-            ),
-            max_targets=_require_non_negative_int(
-                payload.get("max_targets"),
-                field="data_generation.max_targets",
-            ),
+            min_series=min_series,
+            max_series=max_series,
             t_input=_require_positive_float(
                 payload.get("t_input"),
                 field="data_generation.t_input",
@@ -1773,14 +1774,6 @@ def _require_positive_int(value: Any, *, field: str) -> int:
         raise ValueError(f"{field} must be an integer")
     if value <= 0:
         raise ValueError(f"{field} must be positive")
-    return value
-
-
-def _require_non_negative_int(value: Any, *, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field} must be an integer")
-    if value < 0:
-        raise ValueError(f"{field} must be non-negative")
     return value
 
 

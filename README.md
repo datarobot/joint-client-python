@@ -10,13 +10,13 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Import namespace: `jointfm_client`
 - Supported Python: `>=3.11`
 - Current SDK package version: `0.5.0`
-- Current JointFM service schema: `schema_version="v1"`
+- Current JointFM service schema: `schema_version="v2"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
 SDK package versions are standard Python distribution versions: `[project].version` in `pyproject.toml` is the single declared value, and `jointfm_client.__version__` reports it back from the installed distribution metadata. JointFM `schema_version`, `image_version`, `model_version`, and `checkpoint_version` are service compatibility identifiers carried in configuration, health metadata, requests, and responses. They are not SDK package versions, and changing a deployment pin does not by itself require changing the SDK package version.
 
-See [docs/api-reference.md](docs/api-reference.md) for the checked-in API reference covering public classes, functions, exceptions, environment variables, and V1 payload fields.
+See [docs/api-reference.md](docs/api-reference.md) for the checked-in API reference covering public classes, functions, exceptions, environment variables, and V2 payload fields.
 
 ## Service Contract
 
@@ -50,10 +50,10 @@ Example deployment configuration:
 deployment:
 	datarobot_endpoint: https://app.datarobot.com/api/v2
 	datarobot_api_token: <token>
-	schema_version: v1
+	schema_version: v2
 	deployment_id: <deployment-id>
 	# Optional model-version pin; the SDK discovers it from /healthz when unset:
-	# model_version: jointfm-inference:0.2.0+ckpt.fin-2026-05-22
+	# model_version: jointfm-inference:0.3.0+ckpt.fin-2026-05-22
 transport:
 	timeout:
 		connect_seconds: 10.0
@@ -68,19 +68,19 @@ Equivalent `.env` deployment configuration:
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v1
+JOINTFM_SCHEMA_VERSION=v2
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
-# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin-2026-05-22
 ```
 
 Equivalent local REST configuration for a service started from the `joint` repository with `task service:start CONFIG=nvidia-studentt-m4cr2`:
 
 ```dotenv
 JOINTFM_LOCAL_BASE_URL=http://127.0.0.1:8080
-JOINTFM_SCHEMA_VERSION=v1
+JOINTFM_SCHEMA_VERSION=v2
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
-# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
 ```
 
 Choose exactly one service selector:
@@ -165,9 +165,9 @@ Run `task setup` first so VS Code can select the registered `Python (joint-clien
 
 The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
 
-The current V1 forecast request contract is:
+The current V2 forecast request contract is:
 
-- `schema_version`: exactly `"v1"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
+- `schema_version`: exactly `"v2"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
 - `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller. Optional for `from_env()` clients: when `JOINTFM_MODEL_VERSION` is unset the SDK reads it from `/healthz` on first use; when set it acts as a drift-detection pin
 - `query_mode`: `"forecast"`
 - `return_mode`: one of `"mean"`, `"samples"`, or `"quantiles"`
@@ -177,7 +177,7 @@ The current V1 forecast request contract is:
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
 - `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`.
 
-V1 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
+V2 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
 DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas`:
 
@@ -191,7 +191,7 @@ Successful forecast responses preserve `schema_version`, `image_version`, `model
 
 ```json
 {
-	"schema_version": "v1",
+	"schema_version": "v2",
 	"errors": [
 		{
 			"code": "VALIDATION_ERROR",
@@ -202,11 +202,11 @@ Successful forecast responses preserve `schema_version`, `image_version`, `model
 }
 ```
 
-Known V1 error codes are `VALIDATION_ERROR`, `SCHEMA_VERSION_MISMATCH`, `MODEL_VERSION_MISMATCH`, `INPUT_SIZE_EXCEEDED`, and `INTERNAL_ERROR`.
+Known V2 error codes are `VALIDATION_ERROR`, `SCHEMA_VERSION_MISMATCH`, `MODEL_VERSION_MISMATCH`, `INPUT_SIZE_EXCEEDED`, and `INTERNAL_ERROR`.
 
 ## Compatibility Policy
 
-The SDK supports only `schema_version="v1"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded V1 contract, or an unsupported `decoding_strategy`.
+The SDK supports only `schema_version="v2"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded V2 contract, or an unsupported `decoding_strategy`.
 
 Callers should pass an expected `model_version` when they already know which deployment artifact they intend to use. A mismatch is treated as a hard compatibility error rather than silently downgrading, guessing, or retrying another model.
 
@@ -248,11 +248,11 @@ Create `.env` from `.env.sample` or set the same values in your shell. A hosted 
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v1
+JOINTFM_SCHEMA_VERSION=v2
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Or: JOINTFM_DEPLOYMENT_IDS=chevron-id,research-id
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
-# JOINTFM_MODEL_VERSION=jointfm-inference:0.2.0+ckpt.fin-2026-05-22
+# JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin-2026-05-22
 ```
 
 Check that the SDK can resolve the deployment and that the service metadata matches the configured schema and model pins:
@@ -366,7 +366,7 @@ The full set of accepted types comes from the `cz_conventional_commits` rule set
 | `chore` | Repository maintenance not covered above (tooling tweaks, repo-level renames, housekeeping, fixture moves). | none |
 | `style` | Pure formatting or whitespace, no behavior change — rare here because Ruff format runs in pre-commit. | none |
 | `revert` | Reverts a previous commit; the body should include `Refs: <sha>`. Re-add `!` or a `BREAKING CHANGE:` footer if the reverted commit was a breaking change. | none |
-| any type with `!` or a `BREAKING CHANGE:` footer | A breaking change to public API, configuration schema, environment variables, or the V1 wire contract. | **major**¹ |
+| any type with `!` or a `BREAKING CHANGE:` footer | A breaking change to public API, configuration schema, environment variables, or the service wire contract. | **major**¹ |
 
 ¹ This project sets `major_version_zero = true` in `pyproject.toml`, so breaking changes are downgraded to a **minor** bump while the SDK is on `0.x`. They will become major bumps once the SDK ships `1.0.0`.
 

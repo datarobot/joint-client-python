@@ -39,7 +39,7 @@ from jointfm_client import (
 def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> None:
     """Request models serialize direct payloads without mutating inputs."""
     metadata = ForecastRequestMetadata(
-        model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+        model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
         return_mode="quantiles",
     )
     schema = DataFrameSchema(
@@ -76,8 +76,8 @@ def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> N
     )
 
     assert metadata.to_payload() == {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "quantiles",
     }
@@ -91,8 +91,8 @@ def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> N
         "timezone": "UTC",
     }
     assert request.to_payload() == {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "quantiles",
         "time_index_mode": "absolute_datetime",
@@ -130,20 +130,20 @@ def test_request_models_reject_direct_validation_edges() -> None:
 
     with pytest.raises(ValueError, match="schema_version"):
         ForecastRequestMetadata(
-            model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
-            schema_version="v2",
+            model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
+            schema_version="v3",
         )
 
     with pytest.raises(ValueError, match="query_mode"):
         ForecastRequestMetadata(
-            model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+            model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
             query_mode=cast(Any, "complete"),
         )
 
     with pytest.raises(ValueError, match="quantiles may be provided only"):
         ForecastRequest(
             metadata=ForecastRequestMetadata(
-                model_version="jointfm-inference:0.2.0+ckpt.smoke-1",
+                model_version="jointfm-inference:0.3.0+ckpt.smoke-1",
                 return_mode="mean",
             ),
             schema=DataFrameSchema(
@@ -303,8 +303,8 @@ def test_response_models_reject_direct_validation_edges() -> None:
 def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
     """Forecast response rejects request scoped metadata mismatches."""
     request_payload = {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "mean",
         "query_times": [1],
@@ -354,8 +354,8 @@ def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
 def test_forecast_response_rejects_sample_bound_violations() -> None:
     """Forecast response rejects sample bound violations."""
     request_payload = {
-        "schema_version": "v1",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "samples",
         "time_index_mode": "ordinal",
@@ -397,9 +397,9 @@ def test_forecast_response_rejects_sample_bound_violations() -> None:
 def _mean_response_payload() -> dict[str, Any]:
     """Mean response payload."""
     return {
-        "schema_version": "v1",
-        "image_version": "0.2.0",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
         "head": "dummy",
         "query_mode": "forecast",
@@ -419,9 +419,9 @@ def _mean_response_payload() -> dict[str, Any]:
 def _sample_response_payload() -> dict[str, Any]:
     """Sample response payload."""
     return {
-        "schema_version": "v1",
-        "image_version": "0.2.0",
-        "model_version": "jointfm-inference:0.2.0+ckpt.smoke-1",
+        "schema_version": "v2",
+        "image_version": "0.3.0",
+        "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
         "head": "dummy",
         "query_mode": "forecast",

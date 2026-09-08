@@ -48,8 +48,8 @@ class FakeHealthClient:
             "deployment-id/predictionsUnstructured"
         ),
         deployment_selector="deployment_id",
-        schema_version="v1",
-        model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+        schema_version="v2",
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
 
@@ -58,9 +58,9 @@ class FakeHealthClient:
         del cache, refresh
         return HealthMetadata(
             status="ok",
-            schema_version="v1",
-            image_version="0.2.0",
-            model_version="jointfm-inference:0.2.0+ckpt.sdk-test",
+            schema_version="v2",
+            image_version="0.3.0",
+            model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
             checkpoint_version="sdk-test",
             checkpoint_path="/models/jointfm.pt",
             device="cpu",
@@ -171,8 +171,8 @@ def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> No
     request_file.write_text(
         json.dumps(
             {
-                "schema_version": "v1",
-                "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+                "schema_version": "v2",
+                "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
             }
         ),
         encoding="utf-8",
@@ -186,7 +186,7 @@ def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> No
     assert client.payload is not None
     assert json.loads(response_file.read_text(encoding="utf-8")) == {
         "ok": True,
-        "model_version": "jointfm-inference:0.2.0+ckpt.sdk-test",
+        "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
     }
 
 

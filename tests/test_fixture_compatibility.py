@@ -24,6 +24,7 @@ import pytest
 from jointfm_client import (
     ForecastResponse,
     HealthMetadata,
+    SCHEMA_VERSION,
     JointFMServiceError,
     MeanForecastResult,
     QuantileForecastResult,
@@ -32,10 +33,10 @@ from jointfm_client import (
 )
 
 
-def test_health_fixture_matches_current_v1_service_contract(
+def test_health_fixture_matches_current_service_contract(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """Health fixture matches current v1 service contract."""
+    """The checked-in health fixture parses under the SDK's current contract."""
     payload = json_fixture_loader("health_metadata")
     expected_model_version = payload["model_version"]
     assert isinstance(expected_model_version, str)
@@ -46,7 +47,7 @@ def test_health_fixture_matches_current_v1_service_contract(
     )
     metadata = HealthMetadata.from_payload(payload)
 
-    assert metadata.schema_version == "v1"
+    assert metadata.schema_version == SCHEMA_VERSION
     assert metadata.decoding_strategy == "parallel_dense"
     assert metadata.supported_return_modes == (
         "mean",
