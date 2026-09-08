@@ -15,6 +15,7 @@
 """Tests for the contract surface of jointfm_client."""
 
 from collections.abc import Mapping
+import importlib.metadata
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -54,6 +55,7 @@ from jointfm_client import (
     UnsupportedModelVersionError,
     UnsupportedSchemaVersionError,
     UnsupportedServiceContractError,
+    __version__,
     arrays_to_history_rows,
     build_continuous_query_times,
     build_datetime_query_times,
@@ -66,6 +68,7 @@ from jointfm_client import (
     validate_forecast_horizon,
     validate_service_metadata,
 )
+from jointfm_client.contract import PACKAGE_VERSION
 
 
 def _health_metadata() -> dict[str, object]:
@@ -107,8 +110,16 @@ def test_package_identity_contract() -> None:
     """Package identity contract."""
     assert DISTRIBUTION_NAME == "jointfm-client"
     assert IMPORT_NAMESPACE == "jointfm_client"
-    assert FIRST_SUPPORTED_PYTHON_VERSION == "3.13"
+    assert FIRST_SUPPORTED_PYTHON_VERSION == "3.11"
     assert SCHEMA_VERSION == "v1"
+
+
+def test_package_version_matches_installed_distribution() -> None:
+    """Version constants track the installed distribution instead of a literal."""
+    installed_version = importlib.metadata.version(DISTRIBUTION_NAME)
+
+    assert PACKAGE_VERSION == installed_version
+    assert __version__ == installed_version
 
 
 def test_service_route_contract() -> None:

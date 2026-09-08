@@ -64,6 +64,7 @@ from jointfm_client.contract import (
     IMPORT_NAMESPACE,
     LOCAL_HEALTH_ROUTE,
     LOCAL_PREDICT_ROUTE,
+    PACKAGE_VERSION,
     PREDICT_REQUEST_TYPE,
     SCHEMA_VERSION,
     MeanForecastResult,
@@ -142,7 +143,7 @@ from jointfm_client.transport import (
     JointFMTimeoutConfig,
 )
 
-__version__ = "0.4.1"
+__version__ = PACKAGE_VERSION
 
 __all__ = [
     "ColumnSpec",

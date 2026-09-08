@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import importlib.metadata
 import math
 from typing import Any, Final, Literal, Self, TypeAlias, TypeVar, cast
 
@@ -31,8 +32,10 @@ from jointfm_client.exceptions import (
 
 DISTRIBUTION_NAME: Final = "jointfm-client"
 IMPORT_NAMESPACE: Final = "jointfm_client"
-FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.13"
-PACKAGE_VERSION: Final = "0.0.1"
+FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
+# Read from installed distribution metadata so the version cannot drift from
+# pyproject.toml the way a hand-maintained literal here did.
+PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
 SCHEMA_VERSION: Final = "v1"
 DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE: Final = (
