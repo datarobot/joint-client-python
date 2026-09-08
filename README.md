@@ -9,14 +9,14 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Distribution package: `jointfm-client`
 - Import namespace: `jointfm_client`
 - Supported Python: `>=3.11`
-- Current SDK package version: `0.5.0`
+- Current SDK package version: `0.6.0`
 - Current JointFM service schema: `schema_version="v2"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
 SDK package versions are standard Python distribution versions: `[project].version` in `pyproject.toml` is the single declared value, and `jointfm_client.__version__` reports it back from the installed distribution metadata. JointFM `schema_version`, `image_version`, `model_version`, and `checkpoint_version` are service compatibility identifiers carried in configuration, health metadata, requests, and responses. They are not SDK package versions, and changing a deployment pin does not by itself require changing the SDK package version.
 
-See [docs/api-reference.md](docs/api-reference.md) for the checked-in API reference covering public classes, functions, exceptions, environment variables, and V2 payload fields.
+See [docs/api-reference.md](docs/api-reference.md) for the checked-in API reference covering public classes, functions, exceptions, environment variables, and payload fields.
 
 ## Service Contract
 
@@ -165,7 +165,7 @@ Run `task setup` first so VS Code can select the registered `Python (joint-clien
 
 The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
 
-The current V2 forecast request contract is:
+The current forecast request contract is:
 
 - `schema_version`: exactly `"v2"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
 - `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller. Optional for `from_env()` clients: when `JOINTFM_MODEL_VERSION` is unset the SDK reads it from `/healthz` on first use; when set it acts as a drift-detection pin
@@ -177,7 +177,7 @@ The current V2 forecast request contract is:
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
 - `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`.
 
-V2 column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
+Column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
 DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas`:
 
@@ -202,11 +202,11 @@ Successful forecast responses preserve `schema_version`, `image_version`, `model
 }
 ```
 
-Known V2 error codes are `VALIDATION_ERROR`, `SCHEMA_VERSION_MISMATCH`, `MODEL_VERSION_MISMATCH`, `INPUT_SIZE_EXCEEDED`, and `INTERNAL_ERROR`.
+Known error codes are `VALIDATION_ERROR`, `SCHEMA_VERSION_MISMATCH`, `MODEL_VERSION_MISMATCH`, `INPUT_SIZE_EXCEEDED`, and `INTERNAL_ERROR`.
 
 ## Compatibility Policy
 
-The SDK supports only `schema_version="v2"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded V2 contract, or an unsupported `decoding_strategy`.
+The SDK supports only `schema_version="v2"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded service contract, or an unsupported `decoding_strategy`.
 
 Callers should pass an expected `model_version` when they already know which deployment artifact they intend to use. A mismatch is treated as a hard compatibility error rather than silently downgrading, guessing, or retrying another model.
 

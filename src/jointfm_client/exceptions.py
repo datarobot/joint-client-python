@@ -101,4 +101,4 @@ class UnsupportedModelVersionError(JointFMCompatibilityError):
 
 
 class UnsupportedServiceContractError(JointFMCompatibilityError):
-    """Raised when advertised service capabilities do not match the V1 contract."""
+    """Raised when advertised service capabilities do not match the SDK contract."""
