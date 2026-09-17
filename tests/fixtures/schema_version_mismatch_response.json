@@ -3,7 +3,7 @@
   "errors": [
     {
       "code": "SCHEMA_VERSION_MISMATCH",
-      "message": "Unsupported schema_version: expected 'v2', got 'v3'",
+      "message": "Unsupported schema_version: expected 'v3', got 'v2'",
       "field": "schema_version",
       "detail": {}
     }

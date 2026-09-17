@@ -47,7 +47,7 @@ class _ImportanceTransport:
         self.payloads.append(dict(payload))
         samples = self.sample_batches[len(self.payloads) - 1]
         return {
-            "schema_version": "v2",
+            "schema_version": "v3",
             "image_version": "0.3.0",
             "model_version": _MODEL_VERSION,
             "checkpoint_version": "sdk-test",
