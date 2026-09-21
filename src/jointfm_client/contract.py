@@ -37,7 +37,7 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 # pyproject.toml the way a hand-maintained literal here did.
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
-SCHEMA_VERSION: Final = "v2"
+SCHEMA_VERSION: Final = "v3"
 DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE: Final = (
     "deployments/{deployment_id}/predictionsUnstructured"
 )
@@ -52,7 +52,8 @@ SUPPORTED_REQUEST_TYPES: Final[tuple[str, ...]] = (
     HEALTH_REQUEST_TYPE,
 )
 
-QueryMode: TypeAlias = Literal["forecast"]
+QueryMode: TypeAlias = Literal["forecast", "condition"]
+ConditionKind: TypeAlias = Literal["equality", "interval"]
 ReturnMode: TypeAlias = Literal["mean", "samples", "quantiles", "log_prob"]
 TimeIndexMode: TypeAlias = Literal[
     "ordinal",
@@ -82,13 +83,16 @@ ColumnRole: TypeAlias = Literal[
 TimeValueKind: TypeAlias = Literal["continuous_float", "absolute_datetime"]
 StructuredErrorCode: TypeAlias = Literal[
     "VALIDATION_ERROR",
+    "UNSUPPORTED_HEAD_QUERY_COMBINATION",
+    "UNSUPPORTED_RETURN_MODE",
     "SCHEMA_VERSION_MISMATCH",
     "MODEL_VERSION_MISMATCH",
     "INPUT_SIZE_EXCEEDED",
     "INTERNAL_ERROR",
 ]
 
-SUPPORTED_QUERY_MODES: Final[tuple[QueryMode, ...]] = ("forecast",)
+SUPPORTED_QUERY_MODES: Final[tuple[QueryMode, ...]] = ("forecast", "condition")
+SUPPORTED_CONDITION_KINDS: Final[tuple[ConditionKind, ...]] = ("equality", "interval")
 SUPPORTED_RETURN_MODES: Final[tuple[ReturnMode, ...]] = (
     "mean",
     "samples",
@@ -126,6 +130,8 @@ SUPPORTED_TIME_VALUE_KINDS: Final[tuple[TimeValueKind, ...]] = (
 )
 STRUCTURED_ERROR_CODES: Final[tuple[StructuredErrorCode, ...]] = (
     "VALIDATION_ERROR",
+    "UNSUPPORTED_HEAD_QUERY_COMBINATION",
+    "UNSUPPORTED_RETURN_MODE",
     "SCHEMA_VERSION_MISMATCH",
     "MODEL_VERSION_MISMATCH",
     "INPUT_SIZE_EXCEEDED",
@@ -303,6 +309,150 @@ class DataFrameSchema:
 
 
 @dataclass(frozen=True, slots=True)
+class EqualityCondition:
+    """One column of the conditioned position pinned to a value.
+
+    An equality condition is an event of probability zero under a continuous
+    head, so the deployment answers it analytically rather than by filtering
+    draws. It fixes the column's value, which is why that column leaves the
+    read-out projection.
+    """
+
+    column: str
+    value: float
+
+    def __post_init__(self) -> None:
+        """Reject a pin the service would refuse anyway."""
+        _require_string(self.column, field="condition.column")
+        if isinstance(self.value, bool) or not isinstance(self.value, (int, float)):
+            raise ValueError("condition value must be a number")
+        if not math.isfinite(float(self.value)):
+            raise ValueError("condition value must be finite")
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return this condition as JSON-compatible payload fields."""
+        return {"column": self.column, "kind": "equality", "value": float(self.value)}
+
+
+@dataclass(frozen=True, slots=True)
+class IntervalCondition:
+    """One column of the conditioned position confined to a range.
+
+    ``None`` on either side leaves it open. The region carries positive mass,
+    so the deployment answers it by composition on the reduced mixture, and the
+    column stays readable: what it returns is its distribution inside the
+    region.
+    """
+
+    column: str
+    lower: float | None = None
+    upper: float | None = None
+
+    def __post_init__(self) -> None:
+        """Reject a range that bounds nothing or bounds it backwards."""
+        _require_string(self.column, field="condition.column")
+        for bound, name in ((self.lower, "lower"), (self.upper, "upper")):
+            if bound is None:
+                continue
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                raise ValueError(f"condition {name} bound must be a number or None")
+            if not math.isfinite(float(bound)):
+                raise ValueError(f"condition {name} bound must be finite or None")
+        if self.lower is None and self.upper is None:
+            raise ValueError(
+                "an interval open on both sides conditions nothing; give at least one bound"
+            )
+        if (
+            self.lower is not None
+            and self.upper is not None
+            and float(self.lower) >= float(self.upper)
+        ):
+            raise ValueError(
+                f"condition needs lower < upper, got [{self.lower}, {self.upper}]"
+            )
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return this condition as JSON-compatible payload fields."""
+        return {
+            "column": self.column,
+            "kind": "interval",
+            "lower": None if self.lower is None else float(self.lower),
+            "upper": None if self.upper is None else float(self.upper),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionBlock:
+    """Every condition of one request, against one future position.
+
+    The position is named once, by its index into the request's
+    ``query_times``, because conditioning relates variables to each other
+    within a position and never across horizons. A statement spanning
+    horizons is out of reach of this mode and cannot be expressed here.
+    """
+
+    query_time_index: int
+    conditions: Sequence[EqualityCondition | IntervalCondition]
+
+    def __post_init__(self) -> None:
+        """Validate the block independently of any schema or deployment."""
+        if isinstance(self.query_time_index, bool) or not isinstance(
+            self.query_time_index, int
+        ):
+            raise ValueError("query_time_index must be an integer")
+        if self.query_time_index < 0:
+            raise ValueError("query_time_index must not be negative")
+        conditions = _require_sequence(self.conditions, field="conditions")
+        if not conditions:
+            raise ValueError("a condition block must carry at least one condition")
+        seen: set[str] = set()
+        for index, condition in enumerate(conditions):
+            if not isinstance(condition, (EqualityCondition, IntervalCondition)):
+                raise ValueError(
+                    f"conditions[{index}] must be an EqualityCondition or an "
+                    "IntervalCondition"
+                )
+            if condition.column in seen:
+                raise ValueError(
+                    f"column {condition.column!r} carries more than one condition"
+                )
+            seen.add(condition.column)
+
+    @property
+    def pinned_columns(self) -> tuple[str, ...]:
+        """Columns an equality condition fixes, which leave the read-out set."""
+        return tuple(
+            condition.column
+            for condition in self.conditions
+            if isinstance(condition, EqualityCondition)
+        )
+
+    @property
+    def conditioned_columns(self) -> tuple[str, ...]:
+        """Every column this block conditions, of either kind."""
+        return tuple(condition.column for condition in self.conditions)
+
+    @property
+    def kinds(self) -> tuple[ConditionKind, ...]:
+        """The condition kinds this block uses, which a deployment must advertise."""
+        kinds: list[ConditionKind] = []
+        for condition in self.conditions:
+            kind: ConditionKind = (
+                "equality" if isinstance(condition, EqualityCondition) else "interval"
+            )
+            if kind not in kinds:
+                kinds.append(kind)
+        return tuple(kinds)
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the block as JSON-compatible payload fields."""
+        return {
+            "query_time_index": self.query_time_index,
+            "conditions": [condition.to_payload() for condition in self.conditions],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastRequestMetadata:
     """Version and mode metadata for one forecast request."""
 
@@ -352,6 +502,7 @@ class ForecastRequest:
     quantiles: Sequence[float | int] | None = None
     seed: int | None = None
     query_row_ids: Sequence[int] | None = None
+    condition: ConditionBlock | None = None
 
     def __post_init__(self) -> None:
         """Validate payload controls and JSON-facing request arrays."""
@@ -373,11 +524,63 @@ class ForecastRequest:
         _optional_positive_int(self.n_samples, field="n_samples")
         _optional_int(self.seed, field="seed")
 
+        if (self.metadata.query_mode == "condition") != (self.condition is not None):
+            raise ValueError(
+                "query_mode='condition' and a condition block go together: one "
+                "without the other means a different request than the caller wrote"
+            )
+        if self.condition is not None:
+            self._validate_condition()
+
         if self.metadata.return_mode == "quantiles":
             _require_quantiles(self.quantiles)
         elif self.quantiles is not None:
             raise ValueError(
                 "quantiles may be provided only when return_mode='quantiles'"
+            )
+
+    def _validate_condition(self) -> None:
+        """Check the condition block against this request's schema and horizons.
+
+        The deployment rejects all of this too, before executing anything; the
+        point of repeating it here is that a caller learns which column name it
+        got wrong without paying for a round trip.
+        """
+        block = self.condition
+        assert block is not None
+        declared = {column.name for column in self.schema.columns}
+        unknown = [name for name in block.conditioned_columns if name not in declared]
+        if unknown:
+            raise ValueError(f"condition references undeclared columns {unknown}")
+        horizon_count = len(_require_sequence(self.query_times, field="query_times"))
+        if block.query_time_index >= horizon_count:
+            raise ValueError(
+                f"condition.query_time_index {block.query_time_index} is outside the "
+                f"{horizon_count} requested future positions"
+            )
+        if len(set(block.conditioned_columns)) >= len(declared):
+            if len(block.pinned_columns) == len(set(block.conditioned_columns)):
+                raise ValueError(
+                    "pinning every column leaves nothing to read out; the joint "
+                    "density of those values is what return_mode='log_prob' answers"
+                )
+            raise ValueError(
+                "a request must leave at least one column unconditioned: what it "
+                "reads out is the conditional distribution of the columns it does "
+                "not condition"
+            )
+        requested = _resolve_requested_columns(
+            self.schema.columns, self.requested_columns
+        )
+        if requested is None:
+            return
+        requested_names = {value for value in requested if isinstance(value, str)}
+        pinned = sorted(set(block.pinned_columns) & requested_names)
+        if pinned:
+            raise ValueError(
+                f"requested_columns lists pinned columns {pinned}; an equality "
+                "condition fixes the value, so reading it back returns only what "
+                "the request supplied"
             )
 
     def to_payload(self) -> dict[str, Any]:
@@ -401,6 +604,8 @@ class ForecastRequest:
             payload["quantiles"] = _require_quantiles(self.quantiles)
         if self.seed is not None:
             payload["seed"] = self.seed
+        if self.condition is not None:
+            payload["condition"] = self.condition.to_payload()
         return payload
 
 
@@ -486,6 +691,7 @@ class HealthMetadata:
     head: str
     decoding_strategy: DecodingStrategy
     supported_query_modes: tuple[str, ...]
+    supported_condition_kinds: tuple[str, ...]
     supported_return_modes: tuple[str, ...]
     supported_time_index_modes: tuple[str, ...]
     time_index_encoding: str
@@ -534,6 +740,13 @@ class HealthMetadata:
                 payload.get("supported_query_modes"),
                 field="supported_query_modes",
             ),
+            # A deployment that cannot condition advertises an empty list,
+            # which is an answer rather than a missing field.
+            supported_condition_kinds=_string_tuple(
+                payload.get("supported_condition_kinds"),
+                field="supported_condition_kinds",
+                allow_empty=True,
+            ),
             supported_return_modes=_string_tuple(
                 payload.get("supported_return_modes"),
                 field="supported_return_modes",
@@ -574,17 +787,97 @@ class StructuredError:
 
 
 @dataclass(frozen=True, slots=True)
+class IntervalEstimator:
+    """How a multi-column region's probability was estimated.
+
+    Present only when the interval block spans more than one column, which is
+    the only case where a component's box probability has to be estimated; one
+    interval column is exact, and a number that never varies would say nothing.
+    """
+
+    points: int
+    effective_sample_size: float
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> Self:
+        """Parse the estimator accounting from a response payload."""
+        return cls(
+            points=_require_positive_int(
+                payload.get("points"),
+                field="diagnostics.interval_estimator.points",
+            ),
+            effective_sample_size=_require_output_float(
+                payload.get("effective_sample_size"),
+                field="diagnostics.interval_estimator.effective_sample_size",
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionPlausibility:
+    """What the model thinks of the request it was asked to condition on.
+
+    Without it a caller cannot separate "the model is confident" from "you
+    conditioned on something the model finds absurd". Both numbers are in log
+    space, and each is ``None`` when the request carried no condition of that
+    kind. The service reports them and never refuses on them, so acting on them
+    is the caller's decision.
+    """
+
+    equality_log_density: float | None = None
+    region_log_probability: float | None = None
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> Self:
+        """Parse the plausibility block from a response payload."""
+        equality = payload.get("equality_log_density")
+        region = payload.get("region_log_probability")
+        return cls(
+            equality_log_density=(
+                None
+                if equality is None
+                else _require_output_float(
+                    equality, field="plausibility.equality_log_density"
+                )
+            ),
+            region_log_probability=(
+                None
+                if region is None
+                else _require_output_float(
+                    region, field="plausibility.region_log_probability"
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastDiagnostics:
     """Diagnostics block returned with one forecast response."""
 
     history_rows: int
     horizon_count: int
     seed: int | None = None
+    condition_draws: int | None = None
+    interval_estimator: IntervalEstimator | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
         """Parse response diagnostics from a service payload."""
+        raw_estimator = payload.get("interval_estimator")
         return cls(
+            condition_draws=_optional_positive_int(
+                payload.get("condition_draws"),
+                field="diagnostics.condition_draws",
+            ),
+            interval_estimator=(
+                None
+                if raw_estimator is None
+                else IntervalEstimator.from_payload(
+                    _require_mapping(
+                        raw_estimator, field="diagnostics.interval_estimator"
+                    )
+                )
+            ),
             history_rows=_require_positive_int(
                 payload.get("history_rows"),
                 field="diagnostics.history_rows",
@@ -710,6 +1003,7 @@ class ForecastResponse:
     requested_columns: tuple[str, ...]
     diagnostics: ForecastDiagnostics
     errors: tuple[StructuredError, ...]
+    plausibility: ConditionPlausibility | None
 
     @property
     def outputs(self) -> ForecastOutputs:
@@ -859,6 +1153,13 @@ class ForecastResponse:
             "requested_columns": outputs.requested_columns,
             "diagnostics": diagnostics,
             "errors": _structured_error_tuple(payload.get("errors")),
+            "plausibility": (
+                None
+                if payload.get("plausibility") is None
+                else ConditionPlausibility.from_payload(
+                    _require_mapping(payload.get("plausibility"), field="plausibility")
+                )
+            ),
         }
 
         if return_mode == "mean":
@@ -1082,6 +1383,7 @@ def build_forecast_payload(
     seed: int | None = None,
     schema_version: str = SCHEMA_VERSION,
     query_mode: QueryMode = "forecast",
+    condition: ConditionBlock | None = None,
 ) -> dict[str, Any]:
     """Build a validated JSON-compatible forecast request payload."""
     return ForecastRequest(
@@ -1098,7 +1400,39 @@ def build_forecast_payload(
         n_samples=n_samples,
         quantiles=quantiles,
         seed=seed,
+        condition=condition,
     ).to_payload()
+
+
+def require_condition_support(
+    metadata: HealthMetadata,
+    block: ConditionBlock,
+) -> None:
+    """Refuse a conditioning request the mounted deployment has not advertised.
+
+    The gate exists so a caller learns a deployment cannot condition *before*
+    paying for the request, rather than from the error on one it already sent.
+    It reads the advertisement alone, which the deployment derives from its own
+    head, so it can never claim a capability the checkpoint lacks.
+
+    Raises:
+        UnsupportedServiceContractError: when the deployment serves no
+            ``condition`` mode, or none of the condition kinds this block uses.
+    """
+    if "condition" not in metadata.supported_query_modes:
+        raise UnsupportedServiceContractError(
+            f"The mounted {metadata.head!r} deployment does not serve condition "
+            f"queries; it advertises {list(metadata.supported_query_modes)}"
+        )
+    missing = [
+        kind for kind in block.kinds if kind not in metadata.supported_condition_kinds
+    ]
+    if missing:
+        raise UnsupportedServiceContractError(
+            f"The mounted {metadata.head!r} deployment does not serve condition "
+            f"kinds {missing}; it advertises "
+            f"{list(metadata.supported_condition_kinds)}"
+        )
 
 
 def validate_service_metadata(
@@ -1126,10 +1460,21 @@ def validate_service_metadata(
             f"expected {expected_model_version!r}, got {model_version!r}"
         )
 
-    _require_exact_values(
+    # Query modes are per deployment: the service derives them from the mounted
+    # head, so a head that cannot condition advertises fewer modes than this SDK
+    # knows. Requiring equality here would reject exactly the deployments the
+    # advertisement exists to describe.
+    _require_advertised_subset(
         metadata,
         field="supported_query_modes",
         supported_values=SUPPORTED_QUERY_MODES,
+        allow_empty=False,
+    )
+    _require_advertised_subset(
+        metadata,
+        field="supported_condition_kinds",
+        supported_values=SUPPORTED_CONDITION_KINDS,
+        allow_empty=True,
     )
     _require_exact_values(
         metadata,
@@ -1167,6 +1512,48 @@ def _require_decoding_strategy(value: Any) -> DecodingStrategy:
             f"{sorted(SUPPORTED_DECODING_STRATEGIES)!r}, got {value!r}"
         )
     return cast(DecodingStrategy, value)
+
+
+def _require_advertised_subset(
+    metadata: Mapping[str, Any],
+    *,
+    field: str,
+    supported_values: Sequence[str],
+    allow_empty: bool,
+) -> None:
+    """Require one advertised capability list to be a subset this SDK understands.
+
+    Used where the deployment legitimately serves fewer values than the SDK
+    knows, because the service derives the list from its own checkpoint. An
+    advertised value the SDK does not know is still a contract mismatch: it
+    means the deployment is newer than this client.
+    """
+    advertised_values = metadata.get(field)
+    if not isinstance(advertised_values, Sequence) or isinstance(
+        advertised_values, str | bytes | bytearray
+    ):
+        raise UnsupportedServiceContractError(
+            f"JointFM health metadata field {field!r} must be a JSON array of strings"
+        )
+
+    parsed_values: list[str] = []
+    for index, advertised_value in enumerate(advertised_values):
+        if not isinstance(advertised_value, str) or advertised_value == "":
+            raise UnsupportedServiceContractError(
+                f"JointFM health metadata field {field!r}[{index}] must be a non-empty string"
+            )
+        parsed_values.append(advertised_value)
+
+    if not parsed_values and not allow_empty:
+        raise UnsupportedServiceContractError(
+            f"JointFM health metadata field {field!r} advertises nothing"
+        )
+    unknown = sorted(set(parsed_values) - set(supported_values))
+    if unknown:
+        raise UnsupportedServiceContractError(
+            f"Unsupported JointFM {field}: this client does not know {unknown!r}; "
+            f"it supports {sorted(supported_values)!r}"
+        )
 
 
 def _require_exact_values(
@@ -1366,8 +1753,10 @@ def _structured_error_tuple(value: Any) -> tuple[StructuredError, ...]:
     return tuple(parsed_errors)
 
 
-def _string_tuple(value: Any, *, field: str) -> tuple[str, ...]:
-    values = _require_sequence(value, field=field)
+def _string_tuple(
+    value: Any, *, field: str, allow_empty: bool = False
+) -> tuple[str, ...]:
+    values = _require_sequence(value, field=field, allow_empty=allow_empty)
     return tuple(_require_string(item, field=f"{field}[]") for item in values)
 
 
@@ -1418,6 +1807,18 @@ def _forecast_response_expectations(
             isinstance(value, str) and value != "" for value in requested_column_values
         ):
             requested_columns = tuple(requested_column_values)
+
+    condition_value = request_payload.get("condition")
+    if condition_value is not None and query_times is not None:
+        condition_block = _require_mapping(
+            condition_value, field="request_payload.condition"
+        )
+        conditioned_index = condition_block.get("query_time_index")
+        if isinstance(conditioned_index, int) and not isinstance(
+            conditioned_index, bool
+        ):
+            if 0 <= conditioned_index < len(query_times):
+                query_times = (query_times[conditioned_index],)
 
     query_mode_value = request_payload.get("query_mode")
     return_mode_value = request_payload.get("return_mode")

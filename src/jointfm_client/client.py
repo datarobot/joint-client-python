@@ -36,6 +36,7 @@ from jointfm_client.configuration import (
     load_configuration,
 )
 from jointfm_client.contract import (
+    ConditionBlock,
     DEFAULT_CALENDAR_ID,
     HEALTH_REQUEST_TYPE,
     SCHEMA_VERSION,
@@ -47,6 +48,7 @@ from jointfm_client.contract import (
     TimeIndexMode,
     TimeValueKind,
     build_forecast_payload,
+    require_condition_support,
     validate_service_metadata,
 )
 from jointfm_client.exceptions import (
@@ -310,9 +312,18 @@ class JointFMClient:
         nullable_columns: Sequence[str] | None = None,
         bounds: Mapping[str, tuple[float | int | None, float | int | None]]
         | None = None,
+        condition: ConditionBlock | None = None,
     ) -> ForecastResponse:
-        """Build and submit a forecast request from tabular history inputs."""
+        """Build and submit a forecast request from tabular history inputs.
+
+        Passing ``condition`` asks the deployment for the conditional at the one
+        future position the block names, instead of the unconditional forecast.
+        The deployment's advertised capability is checked first, so a deployment
+        that cannot condition is refused here rather than after a round trip.
+        """
         self._require_predict_url("forecast")
+        if condition is not None:
+            require_condition_support(self.health(cache=True), condition)
         resolved_model_version = self._resolve_model_version(
             model_version=model_version,
         )
@@ -336,6 +347,7 @@ class JointFMClient:
                 use_local_normalized_time=use_local_normalized_time,
                 calendar_id=calendar_id,
                 timezone=timezone,
+                condition=condition,
             )
         else:
             payload = build_forecast_payload_from_dataframe(
@@ -369,6 +381,7 @@ class JointFMClient:
                 time_value_columns=time_value_columns,
                 nullable_columns=nullable_columns,
                 bounds=bounds,
+                condition=condition,
             )
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
@@ -397,8 +410,13 @@ class JointFMClient:
         requested_columns: Sequence[str | int] | None = None,
         model_version: str | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> MeanForecastResult:
-        """Forecast mean values through the shared forecast validation path."""
+        """Forecast mean values through the shared forecast validation path.
+
+        With ``condition`` the mean is the conditional mean at the one future
+        position the block names; see :meth:`forecast`.
+        """
         return cast(
             MeanForecastResult,
             self.forecast(
@@ -412,6 +430,7 @@ class JointFMClient:
                 return_mode="mean",
                 model_version=model_version,
                 seed=seed,
+                condition=condition,
             ),
         )
 
@@ -428,8 +447,13 @@ class JointFMClient:
         model_version: str | None = None,
         n_samples: int | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> SampleForecastResult:
-        """Forecast sample paths through the shared forecast validation path."""
+        """Forecast sample paths through the shared forecast validation path.
+
+        With ``condition`` the draws come from the conditional at the one future
+        position the block names; see :meth:`forecast`.
+        """
         return cast(
             SampleForecastResult,
             self.forecast(
@@ -444,6 +468,7 @@ class JointFMClient:
                 model_version=model_version,
                 n_samples=n_samples,
                 seed=seed,
+                condition=condition,
             ),
         )
 
@@ -461,8 +486,13 @@ class JointFMClient:
         n_samples: int | None = None,
         quantiles: Sequence[float | int] | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> QuantileForecastResult:
-        """Forecast quantiles through the shared forecast validation path."""
+        """Forecast quantiles through the shared forecast validation path.
+
+        With ``condition`` the quantiles describe the conditional at the one
+        future position the block names; see :meth:`forecast`.
+        """
         return cast(
             QuantileForecastResult,
             self.forecast(
@@ -478,6 +508,7 @@ class JointFMClient:
                 n_samples=n_samples,
                 quantiles=quantiles,
                 seed=seed,
+                condition=condition,
             ),
         )
 
@@ -636,6 +667,7 @@ class JointFMClient:
         use_local_normalized_time: bool,
         calendar_id: str,
         timezone: str | None,
+        condition: ConditionBlock | None = None,
     ) -> dict[str, Any]:
         if schema is None:
             if columns is None:
@@ -662,6 +694,8 @@ class JointFMClient:
             quantiles=quantiles,
             seed=seed,
             schema_version=schema_version,
+            query_mode="forecast" if condition is None else "condition",
+            condition=condition,
         )
 
     def _resolve_sample_batch_cap(self, payload: Mapping[str, Any]) -> int | None:
@@ -1095,7 +1129,17 @@ def _merge_sample_forecast_results(
             history_rows=first_result.diagnostics.history_rows,
             horizon_count=first_result.diagnostics.horizon_count,
             seed=diagnostics_seed,
+            condition_draws=(
+                None
+                if first_result.diagnostics.condition_draws is None
+                else len(merged_samples)
+            ),
+            interval_estimator=first_result.diagnostics.interval_estimator,
         ),
+        # Every batch answers the same request, so what the model thinks of the
+        # conditions does not vary across them; the region probability reported
+        # here is the first batch's estimate of it.
+        plausibility=first_result.plausibility,
         errors=(),
         samples=merged_samples,
     )
