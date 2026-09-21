@@ -410,8 +410,13 @@ class JointFMClient:
         requested_columns: Sequence[str | int] | None = None,
         model_version: str | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> MeanForecastResult:
-        """Forecast mean values through the shared forecast validation path."""
+        """Forecast mean values through the shared forecast validation path.
+
+        With ``condition`` the mean is the conditional mean at the one future
+        position the block names; see :meth:`forecast`.
+        """
         return cast(
             MeanForecastResult,
             self.forecast(
@@ -425,6 +430,7 @@ class JointFMClient:
                 return_mode="mean",
                 model_version=model_version,
                 seed=seed,
+                condition=condition,
             ),
         )
 
@@ -441,8 +447,13 @@ class JointFMClient:
         model_version: str | None = None,
         n_samples: int | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> SampleForecastResult:
-        """Forecast sample paths through the shared forecast validation path."""
+        """Forecast sample paths through the shared forecast validation path.
+
+        With ``condition`` the draws come from the conditional at the one future
+        position the block names; see :meth:`forecast`.
+        """
         return cast(
             SampleForecastResult,
             self.forecast(
@@ -457,6 +468,7 @@ class JointFMClient:
                 model_version=model_version,
                 n_samples=n_samples,
                 seed=seed,
+                condition=condition,
             ),
         )
 
@@ -474,8 +486,13 @@ class JointFMClient:
         n_samples: int | None = None,
         quantiles: Sequence[float | int] | None = None,
         seed: int | None = None,
+        condition: ConditionBlock | None = None,
     ) -> QuantileForecastResult:
-        """Forecast quantiles through the shared forecast validation path."""
+        """Forecast quantiles through the shared forecast validation path.
+
+        With ``condition`` the quantiles describe the conditional at the one
+        future position the block names; see :meth:`forecast`.
+        """
         return cast(
             QuantileForecastResult,
             self.forecast(
@@ -491,6 +508,7 @@ class JointFMClient:
                 n_samples=n_samples,
                 quantiles=quantiles,
                 seed=seed,
+                condition=condition,
             ),
         )
 

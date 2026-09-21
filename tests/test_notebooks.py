@@ -128,6 +128,7 @@ def test_example_notebooks_start_with_bootstrap_cell() -> None:
     )
 
     assert [path.name for path in notebook_paths] == [
+        "forecast_condition.ipynb",
         "forecast_csv.ipynb",
         "forecast_mean.ipynb",
         "forecast_quantiles.ipynb",

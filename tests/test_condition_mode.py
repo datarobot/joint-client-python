@@ -24,8 +24,8 @@ refuses on, so acting on them stays the caller's decision.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import Any, cast
 
 import pytest
 
@@ -40,8 +40,13 @@ from jointfm_client import (
     ForecastResponse,
     HealthMetadata,
     IntervalCondition,
+    JointFMClient,
+    MeanForecastResult,
+    SampleForecastResult,
     build_forecast_payload,
+    build_forecast_payload_from_dataframe,
     require_condition_support,
+    validate_service_metadata,
 )
 from jointfm_client.contract import QueryMode
 from jointfm_client.exceptions import UnsupportedServiceContractError
@@ -351,3 +356,247 @@ def test_an_interval_response_reads_back_its_estimator_accuracy(
     assert estimator is not None
     assert estimator.points == 16384
     assert estimator.effective_sample_size == pytest.approx(11453.2)
+
+
+class _ConditionTransport:
+    """Fake JSON transport for a deployment that advertises the condition mode.
+
+    It records every predict payload and answers each sample request with as
+    many draws as it asked for, so the batching path can be checked end to end
+    without a service.
+    """
+
+    def __init__(
+        self,
+        *,
+        health_payload: dict[str, Any],
+        predict_payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Remember the advertisement and the canned prediction to serve."""
+        self.health_payload = health_payload
+        self.predict_payload = predict_payload
+        self.payloads: list[dict[str, Any]] = []
+        self.health_count = 0
+
+    def get_json(self, url: str) -> Mapping[str, Any]:
+        """Serve the health advertisement on the local health route."""
+        assert url == "http://127.0.0.1:8080/healthz"
+        self.health_count += 1
+        return self.health_payload
+
+    def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Record the predict payload and answer it."""
+        assert url == "http://127.0.0.1:8080/predict"
+        self.payloads.append(dict(payload))
+        if self.predict_payload is not None:
+            return self.predict_payload
+        sample_count = payload["n_samples"]
+        assert isinstance(sample_count, int)
+        start = sum(cast(int, earlier["n_samples"]) for earlier in self.payloads[:-1])
+        return {
+            "schema_version": "v3",
+            "image_version": "0.3.0",
+            "model_version": _MODEL_VERSION,
+            "checkpoint_version": "sdk-test",
+            "head": "gmm",
+            "query_mode": "condition",
+            "return_mode": "samples",
+            "outputs": {
+                "query_times": [3],
+                "requested_columns": ["target"],
+                "mean": None,
+                "samples": [[[float(start + index)]] for index in range(sample_count)],
+                "quantiles": None,
+            },
+            "plausibility": {
+                "equality_log_density": -1.27,
+                "region_log_probability": None,
+            },
+            "diagnostics": {
+                "history_rows": 2,
+                "horizon_count": 1,
+                "seed": payload.get("seed"),
+                "condition_draws": sample_count,
+                "interval_estimator": None,
+            },
+            "errors": [],
+        }
+
+
+def _health_payload(
+    *,
+    query_modes: list[str],
+    condition_kinds: list[str],
+    max_sample_count: int = 4096,
+) -> dict[str, Any]:
+    """Build one health advertisement as the service serializes it."""
+    return {
+        "status": "ok",
+        "schema_version": "v3",
+        "image_version": "0.3.0",
+        "model_version": _MODEL_VERSION,
+        "checkpoint_version": "sdk-test",
+        "checkpoint_path": "/models/jointfm.pt",
+        "device": "cpu",
+        "head": "gmm",
+        "decoding_strategy": "parallel_dense",
+        "supported_query_modes": query_modes,
+        "supported_condition_kinds": condition_kinds,
+        "supported_return_modes": ["mean", "samples", "quantiles", "log_prob"],
+        "supported_time_index_modes": [
+            "ordinal",
+            "continuous_float",
+            "absolute_datetime",
+        ],
+        "time_index_encoding": "legacy_discrete_grid",
+        "max_sample_count": max_sample_count,
+    }
+
+
+def _client(transport: _ConditionTransport) -> JointFMClient:
+    """Build a local-service client over the fake transport."""
+    return JointFMClient(
+        health_url="http://127.0.0.1:8080/healthz",
+        predict_url="http://127.0.0.1:8080/predict",
+        transport=transport,
+    )
+
+
+_HISTORY_ROWS = (
+    {"driver": 1.0, "hedge": 0.5, "target": 10.0},
+    {"driver": 1.1, "hedge": 0.6, "target": 11.0},
+)
+_PIN_DRIVER = ConditionBlock(
+    query_time_index=1,
+    conditions=(EqualityCondition(column="driver", value=1.5),),
+)
+
+
+def test_the_client_sends_the_condition_and_reads_the_answer_back(
+    json_fixture_loader: Callable[[str], dict[str, Any]],
+) -> None:
+    """The typed helper carries the block onto the wire and types what comes back."""
+    transport = _ConditionTransport(
+        health_payload=_health_payload(
+            query_modes=["forecast", "condition"],
+            condition_kinds=["equality", "interval"],
+        ),
+        predict_payload=json_fixture_loader("condition_mean_response"),
+    )
+
+    result = _client(transport).forecast_mean(
+        list(_HISTORY_ROWS),
+        schema=_schema(),
+        query_times=[2, 3],
+        requested_columns=["target"],
+        model_version=_MODEL_VERSION,
+        seed=7,
+        condition=_PIN_DRIVER,
+    )
+
+    assert isinstance(result, MeanForecastResult)
+    assert result.query_mode == "condition"
+    assert result.query_times == (3,)
+    assert result.mean == ((13.5,),)
+    assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
+    assert len(transport.payloads) == 1
+    sent = transport.payloads[0]
+    assert sent["query_mode"] == "condition"
+    assert sent["condition"] == _PIN_DRIVER.to_payload()
+
+
+def test_the_client_refuses_before_posting_when_the_deployment_cannot_condition() -> (
+    None
+):
+    """The gate runs on the advertisement, so the predict route is never touched."""
+    transport = _ConditionTransport(
+        health_payload=_health_payload(query_modes=["forecast"], condition_kinds=[]),
+    )
+
+    with pytest.raises(UnsupportedServiceContractError, match="does not serve"):
+        _client(transport).forecast_mean(
+            list(_HISTORY_ROWS),
+            schema=_schema(),
+            query_times=[2, 3],
+            requested_columns=["target"],
+            model_version=_MODEL_VERSION,
+            condition=_PIN_DRIVER,
+        )
+
+    assert transport.health_count == 1
+    assert transport.payloads == []
+
+
+def test_batched_condition_samples_merge_into_one_conditional_answer() -> None:
+    """Every batch repeats the same block; the merge recounts the draws and keeps the plausibility."""
+    transport = _ConditionTransport(
+        health_payload=_health_payload(
+            query_modes=["forecast", "condition"],
+            condition_kinds=["equality", "interval"],
+            max_sample_count=2,
+        ),
+    )
+
+    result = _client(transport).forecast_samples(
+        list(_HISTORY_ROWS),
+        schema=_schema(),
+        query_times=[2, 3],
+        requested_columns=["target"],
+        model_version=_MODEL_VERSION,
+        n_samples=3,
+        seed=7,
+        condition=_PIN_DRIVER,
+    )
+
+    assert isinstance(result, SampleForecastResult)
+    assert result.samples == (((0.0,),), ((1.0,),), ((2.0,),))
+    assert result.query_times == (3,)
+    assert result.diagnostics.condition_draws == 3
+    assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
+    assert [payload["n_samples"] for payload in transport.payloads] == [2, 1]
+    assert all(
+        payload["query_mode"] == "condition"
+        and payload["condition"] == _PIN_DRIVER.to_payload()
+        for payload in transport.payloads
+    )
+
+
+def test_the_dataframe_adapter_builds_a_condition_request() -> None:
+    """A pandas caller passes the block and gets the condition envelope."""
+    pandas = pytest.importorskip("pandas")
+    frame = pandas.DataFrame(list(_HISTORY_ROWS))
+
+    payload = build_forecast_payload_from_dataframe(
+        frame,
+        model_version=_MODEL_VERSION,
+        time_index_mode="ordinal",
+        query_times=[2, 3],
+        target_columns=["target"],
+        requested_columns=["target"],
+        condition=_PIN_DRIVER,
+    )
+
+    assert payload["query_mode"] == "condition"
+    assert payload["condition"] == _PIN_DRIVER.to_payload()
+    assert payload["requested_columns"] == ["target"]
+
+
+@pytest.mark.parametrize(
+    ("field", "advertised", "message"),
+    [
+        ("supported_query_modes", [], "advertises nothing"),
+        ("supported_condition_kinds", ["parametric"], "does not know"),
+    ],
+)
+def test_metadata_validation_rejects_an_advertisement_this_client_cannot_serve(
+    field: str, advertised: list[str], message: str
+) -> None:
+    """Fewer capabilities than the SDK knows are fine; none, or unknown ones, are not."""
+    payload = _health_payload(
+        query_modes=["forecast", "condition"],
+        condition_kinds=["equality", "interval"],
+    )
+    payload[field] = advertised
+
+    with pytest.raises(UnsupportedServiceContractError, match=message):
+        validate_service_metadata(payload, expected_model_version=_MODEL_VERSION)
