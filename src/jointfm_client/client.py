@@ -64,6 +64,7 @@ from jointfm_client.feature_importance import (
 from jointfm_client.contract import (
     ForecastDiagnostics,
     ForecastResponse,
+    LogProbResult,
     MeanForecastResult,
     QuantileForecastResult,
     SampleForecastResult,
@@ -313,6 +314,7 @@ class JointFMClient:
         bounds: Mapping[str, tuple[float | int | None, float | int | None]]
         | None = None,
         condition: ConditionBlock | None = None,
+        query_rows: Any | None = None,
     ) -> ForecastResponse:
         """Build and submit a forecast request from tabular history inputs.
 
@@ -320,6 +322,9 @@ class JointFMClient:
         future position the block names, instead of the unconditional forecast.
         The deployment's advertised capability is checked first, so a deployment
         that cannot condition is refused here rather than after a round trip.
+
+        ``query_rows`` carries the observed values at ``query_times`` that
+        ``return_mode='log_prob'`` scores, in the same shape as ``history``.
         """
         self._require_predict_url("forecast")
         if condition is not None:
@@ -348,6 +353,7 @@ class JointFMClient:
                 calendar_id=calendar_id,
                 timezone=timezone,
                 condition=condition,
+                query_rows=query_rows,
             )
         else:
             payload = build_forecast_payload_from_dataframe(
@@ -382,6 +388,7 @@ class JointFMClient:
                 nullable_columns=nullable_columns,
                 bounds=bounds,
                 condition=condition,
+                query_rows=query_rows,
             )
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
@@ -509,6 +516,52 @@ class JointFMClient:
                 quantiles=quantiles,
                 seed=seed,
                 condition=condition,
+            ),
+        )
+
+    def forecast_log_prob(
+        self,
+        history: Any,
+        *,
+        query_times: Sequence[Any],
+        query_rows: Any,
+        schema: DataFrameSchema | None = None,
+        time_index_mode: TimeIndexMode = "ordinal",
+        columns: Sequence[ColumnSpec] | None = None,
+        time_column: str | None = None,
+        requested_columns: Sequence[str | int] | None = None,
+        model_version: str | None = None,
+        seed: int | None = None,
+        condition: ConditionBlock | None = None,
+    ) -> LogProbResult:
+        """Score observed future values through the shared forecast validation path.
+
+        This is the one return mode that answers a question about values the
+        caller already has: ``query_rows`` holds the observed row at each entry
+        of ``query_times``, and the result is the model's log density of those
+        values under its joint at that position. It therefore scores the whole
+        joint, and ``requested_columns`` — when given at all — must name every
+        readable column in schema order.
+
+        With ``condition`` the score is taken under the conditional at the one
+        future position the block names, and the service refuses rows that
+        contradict the condition instead of scoring them; see :meth:`forecast`.
+        """
+        return cast(
+            LogProbResult,
+            self.forecast(
+                history,
+                query_times=query_times,
+                schema=schema,
+                time_index_mode=time_index_mode,
+                columns=columns,
+                time_column=time_column,
+                requested_columns=requested_columns,
+                return_mode="log_prob",
+                model_version=model_version,
+                seed=seed,
+                condition=condition,
+                query_rows=query_rows,
             ),
         )
 
@@ -668,6 +721,7 @@ class JointFMClient:
         calendar_id: str,
         timezone: str | None,
         condition: ConditionBlock | None = None,
+        query_rows: Any | None = None,
     ) -> dict[str, Any]:
         if schema is None:
             if columns is None:
@@ -696,6 +750,7 @@ class JointFMClient:
             schema_version=schema_version,
             query_mode="forecast" if condition is None else "condition",
             condition=condition,
+            query_rows=query_rows,
         )
 
     def _resolve_sample_batch_cap(self, payload: Mapping[str, Any]) -> int | None:

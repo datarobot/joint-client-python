@@ -38,6 +38,9 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
 SCHEMA_VERSION: Final = "v3"
+# The service sums and averages its log densities in the model's own precision,
+# so its summaries differ from a recomputation in the last few digits.
+DERIVED_SCORE_TOLERANCE: Final = 1e-6
 DATAROBOT_UNSTRUCTURED_PREDICTION_ROUTE_TEMPLATE: Final = (
     "deployments/{deployment_id}/predictionsUnstructured"
 )
@@ -503,6 +506,7 @@ class ForecastRequest:
     seed: int | None = None
     query_row_ids: Sequence[int] | None = None
     condition: ConditionBlock | None = None
+    query_rows: Sequence[Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         """Validate payload controls and JSON-facing request arrays."""
@@ -538,6 +542,14 @@ class ForecastRequest:
             raise ValueError(
                 "quantiles may be provided only when return_mode='quantiles'"
             )
+
+        if (self.metadata.return_mode == "log_prob") != (self.query_rows is not None):
+            raise ValueError(
+                "return_mode='log_prob' and query_rows go together: scoring needs "
+                "the observed values, and no other return mode reads them"
+            )
+        if self.query_rows is not None:
+            self._validate_query_rows()
 
     def _validate_condition(self) -> None:
         """Check the condition block against this request's schema and horizons.
@@ -583,11 +595,73 @@ class ForecastRequest:
                 "the request supplied"
             )
 
+    def _validate_query_rows(self) -> None:
+        """Check the observed rows a log-density request scores.
+
+        The service scores the whole joint at each future position, so a row
+        must carry every declared column and ``requested_columns`` must name
+        every readable one in schema order: a narrower projection would score a
+        different distribution than the caller believes it asked about. An
+        equality condition is the one exception, since it fixes its column's
+        value and the conditioning contract forbids reading it back.
+
+        Only two per-value failures are decidable without the deployment's own
+        encoding and are checked here — a missing value and a non-finite number.
+        A categorical label passes, because the service maps it through the
+        column's declared mapping before scoring it.
+        """
+        rows = _require_sequence(self.query_rows, field="query_rows")
+        query_times = _require_sequence(self.query_times, field="query_times")
+        if len(rows) != len(query_times):
+            raise ValueError(
+                f"query_rows must carry one row per query time: got {len(rows)} "
+                f"rows for {len(query_times)} query_times"
+            )
+        declared = [column.name for column in self.schema.columns]
+        required = (
+            declared
+            if self.schema.time_column is None
+            else [
+                *declared,
+                self.schema.time_column,
+            ]
+        )
+        for index, row in enumerate(rows):
+            row_mapping = _require_mapping(row, field=f"query_rows[{index}]")
+            missing = [name for name in required if name not in row_mapping]
+            if missing:
+                raise ValueError(
+                    f"query_rows[{index}] is missing declared columns: {missing}"
+                )
+            for name in declared:
+                _require_scored_value(
+                    row_mapping[name], field=f"query_rows[{index}].{name}"
+                )
+
+        requested = _resolve_requested_columns(
+            self.schema.columns, self.requested_columns
+        )
+        if requested is None:
+            return
+        pinned = set(() if self.condition is None else self.condition.pinned_columns)
+        readable = [name for name in declared if name not in pinned]
+        if requested != readable:
+            excused = (
+                f", the pinned columns {sorted(pinned)} excepted" if pinned else ""
+            )
+            raise ValueError(
+                "return_mode='log_prob' scores the whole joint, so "
+                "requested_columns must list every declared column in schema "
+                f"order{excused}: expected {readable}, got {requested}"
+            )
+
     def to_payload(self) -> dict[str, Any]:
         """Return a JSON-compatible forecast request without mutating inputs."""
         payload = self.metadata.to_payload()
         payload.update(self.schema.to_payload())
-        payload["history_rows"] = _serialize_history_rows(self.history_rows)
+        payload["history_rows"] = _serialize_rows(
+            self.history_rows, field="history_rows"
+        )
         payload["query_times"] = _serialize_query_times(
             self.query_times,
             time_index_mode=self.schema.time_index_mode,
@@ -606,6 +680,8 @@ class ForecastRequest:
             payload["seed"] = self.seed
         if self.condition is not None:
             payload["condition"] = self.condition.to_payload()
+        if self.query_rows is not None:
+            payload["query_rows"] = _serialize_rows(self.query_rows, field="query_rows")
         return payload
 
 
@@ -822,6 +898,28 @@ class ConditionPlausibility:
     space, and each is ``None`` when the request carried no condition of that
     kind. The service reports them and never refuses on them, so acting on them
     is the caller's decision.
+
+    Each number is joint over its whole condition block rather than one value
+    per column: ``equality_log_density`` covers every pinned value at once, and
+    ``region_log_probability`` covers the whole box at once. Do not rebuild
+    either by multiplying per-column numbers, which would assume the columns are
+    independent and so discard what a joint model is for.
+
+    ``region_log_probability`` is measured *after* the pinned columns are
+    applied, so on a request carrying both kinds it is the log probability of
+    the box **given the pins**, not the box's own. The two therefore chain, and
+    their sum is the plausibility of the whole condition set::
+
+        equality_log_density + region_log_probability
+            == log( density(pins) * P(box | pins) )
+
+    That sum is a density times a probability. Its ``exp`` is not a
+    probability -- it carries the reciprocal units of the pinned columns and can
+    exceed one -- so compare it, never threshold it: the difference between two
+    scenarios pinning the same columns is a log likelihood ratio and is
+    unit-free. For a request carrying only interval conditions there is nothing
+    to combine and ``region_log_probability`` alone is the joint probability of
+    the conditioned event.
     """
 
     equality_log_density: float | None = None
@@ -904,6 +1002,86 @@ class QuantileForecast:
 
 
 @dataclass(frozen=True, slots=True)
+class LogProbScores:
+    """Per-horizon log densities of one scored request, with its summaries.
+
+    The service reports the same numbers several times over: ``values`` holds
+    the log density of each scored future position, ``nll_values`` their
+    negatives, and the four scalars the sum and the mean of each. Parsing
+    recomputes every redundant field from ``values`` instead of trusting it, so
+    a truncated or mismatched payload fails here rather than reading as a score.
+
+    A log density is joint over the columns that were scored, so the block has
+    no column axis however wide the request was: one number per horizon.
+    """
+
+    values: tuple[float, ...]
+    nll_values: tuple[float, ...]
+    total: float
+    mean: float
+    nll_total: float
+    nll_mean: float
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Mapping[str, Any],
+        *,
+        expected_horizon_count: int | None = None,
+    ) -> Self:
+        """Parse one ``outputs.log_prob`` block and check its derived fields."""
+        values = _require_float_vector(
+            payload.get("values"),
+            field="outputs.log_prob.values",
+            expected_length=expected_horizon_count,
+        )
+        nll_values = _require_float_vector(
+            payload.get("nll_values"),
+            field="outputs.log_prob.nll_values",
+            expected_length=len(values),
+        )
+        for index, (score, negated) in enumerate(zip(values, nll_values, strict=True)):
+            _require_derived_score(
+                negated,
+                expected=-score,
+                field=f"outputs.log_prob.nll_values[{index}]",
+            )
+        summed = math.fsum(values)
+        total = _require_derived_score(
+            _require_output_float(payload.get("total"), field="outputs.log_prob.total"),
+            expected=summed,
+            field="outputs.log_prob.total",
+        )
+        mean = _require_derived_score(
+            _require_output_float(payload.get("mean"), field="outputs.log_prob.mean"),
+            expected=summed / len(values),
+            field="outputs.log_prob.mean",
+        )
+        nll_total = _require_derived_score(
+            _require_output_float(
+                payload.get("nll_total"), field="outputs.log_prob.nll_total"
+            ),
+            expected=-total,
+            field="outputs.log_prob.nll_total",
+        )
+        nll_mean = _require_derived_score(
+            _require_output_float(
+                payload.get("nll_mean"), field="outputs.log_prob.nll_mean"
+            ),
+            expected=-mean,
+            field="outputs.log_prob.nll_mean",
+        )
+        return cls(
+            values=values,
+            nll_values=nll_values,
+            total=total,
+            mean=mean,
+            nll_total=nll_total,
+            nll_mean=nll_mean,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ForecastOutputs:
     """Legacy-shaped forecast output arrays for one parsed forecast result."""
 
@@ -912,6 +1090,7 @@ class ForecastOutputs:
     mean: tuple[tuple[float, ...], ...] | None = None
     samples: tuple[tuple[tuple[float, ...], ...], ...] | None = None
     quantiles: tuple[QuantileForecast, ...] | None = None
+    log_prob: LogProbScores | None = None
 
     @classmethod
     def from_payload(
@@ -948,6 +1127,7 @@ class ForecastOutputs:
         mean: tuple[tuple[float, ...], ...] | None = None
         samples: tuple[tuple[tuple[float, ...], ...], ...] | None = None
         quantiles: tuple[QuantileForecast, ...] | None = None
+        log_prob: LogProbScores | None = None
 
         if return_mode == "mean":
             mean = _require_float_matrix(
@@ -958,6 +1138,7 @@ class ForecastOutputs:
             )
             _require_none(payload.get("samples"), field="outputs.samples")
             _require_none(payload.get("quantiles"), field="outputs.quantiles")
+            _require_none(payload.get("log_prob"), field="outputs.log_prob")
         elif return_mode == "samples":
             samples = _require_float_tensor3(
                 payload.get("samples"),
@@ -968,7 +1149,8 @@ class ForecastOutputs:
             )
             _require_none(payload.get("mean"), field="outputs.mean")
             _require_none(payload.get("quantiles"), field="outputs.quantiles")
-        else:
+            _require_none(payload.get("log_prob"), field="outputs.log_prob")
+        elif return_mode == "quantiles":
             quantiles = _require_quantile_forecasts(
                 payload.get("quantiles"),
                 field="outputs.quantiles",
@@ -978,6 +1160,21 @@ class ForecastOutputs:
             )
             _require_none(payload.get("mean"), field="outputs.mean")
             _require_none(payload.get("samples"), field="outputs.samples")
+            _require_none(payload.get("log_prob"), field="outputs.log_prob")
+        elif return_mode == "log_prob":
+            log_prob = LogProbScores.from_payload(
+                _require_mapping(payload.get("log_prob"), field="outputs.log_prob"),
+                expected_horizon_count=horizon_count,
+            )
+            _require_none(payload.get("mean"), field="outputs.mean")
+            _require_none(payload.get("samples"), field="outputs.samples")
+            _require_none(payload.get("quantiles"), field="outputs.quantiles")
+        else:
+            # A mode nobody parses must fail here rather than fall through to
+            # another mode's branch and be read as that mode's shape.
+            raise ValueError(
+                f"outputs cannot be parsed for return_mode {return_mode!r}"
+            )
 
         return cls(
             query_times=query_times,
@@ -985,6 +1182,7 @@ class ForecastOutputs:
             mean=mean,
             samples=samples,
             quantiles=quantiles,
+            log_prob=log_prob,
         )
 
 
@@ -1168,8 +1366,11 @@ class ForecastResponse:
         if return_mode == "samples":
             assert outputs.samples is not None
             return SampleForecastResult(samples=outputs.samples, **shared_fields)
-        assert outputs.quantiles is not None
-        return QuantileForecastResult(quantiles=outputs.quantiles, **shared_fields)
+        if return_mode == "quantiles":
+            assert outputs.quantiles is not None
+            return QuantileForecastResult(quantiles=outputs.quantiles, **shared_fields)
+        assert outputs.log_prob is not None
+        return LogProbResult(log_prob=outputs.log_prob, **shared_fields)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1370,6 +1571,66 @@ class QuantileForecastResult(ForecastResponse):
         return pandas_module.DataFrame.from_records(rows)
 
 
+@dataclass(frozen=True, slots=True)
+class LogProbResult(ForecastResponse):
+    """Parsed log densities of observed values, with shared metadata.
+
+    This result carries no forecast values, because a scored request supplies
+    them itself as ``query_rows``: what comes back is how plausible the model
+    finds them. Each score is joint over the scored columns, so the conversions
+    have a horizon axis and no column axis.
+    """
+
+    log_prob: LogProbScores
+
+    @property
+    def outputs(self) -> ForecastOutputs:
+        """Return the legacy nested outputs view for scored requests."""
+        return ForecastOutputs(
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+            log_prob=self.log_prob,
+        )
+
+    def to_numpy(self) -> Any:
+        """Return NumPy log densities with axis order ``(horizon,)``."""
+        numpy_module = _require_numpy_module()
+        return numpy_module.asarray(self.log_prob.values, dtype=float)
+
+    def to_pandas_tidy(self) -> Any:
+        """Return a tidy DataFrame with ``query_time``, ``log_prob``, and ``nll``."""
+        pandas_module = _require_pandas_module()
+        rows = [
+            {"query_time": query_time, "log_prob": score, "nll": negated}
+            for query_time, score, negated in zip(
+                self.query_times,
+                self.log_prob.values,
+                self.log_prob.nll_values,
+                strict=True,
+            )
+        ]
+        return pandas_module.DataFrame.from_records(rows)
+
+    def to_pandas_wide(self) -> Any:
+        """Return the one-row request summary over the scored horizons.
+
+        The other result classes widen the column axis, which a log density does
+        not have. The wide view is therefore the request-level summary the
+        service reports, and the per-horizon scores stay in the tidy view.
+        """
+        pandas_module = _require_pandas_module()
+        return pandas_module.DataFrame.from_records(
+            [
+                {
+                    "total": self.log_prob.total,
+                    "mean": self.log_prob.mean,
+                    "nll_total": self.log_prob.nll_total,
+                    "nll_mean": self.log_prob.nll_mean,
+                }
+            ]
+        )
+
+
 def build_forecast_payload(
     *,
     model_version: str,
@@ -1384,6 +1645,7 @@ def build_forecast_payload(
     schema_version: str = SCHEMA_VERSION,
     query_mode: QueryMode = "forecast",
     condition: ConditionBlock | None = None,
+    query_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a validated JSON-compatible forecast request payload."""
     return ForecastRequest(
@@ -1401,6 +1663,7 @@ def build_forecast_payload(
         quantiles=quantiles,
         seed=seed,
         condition=condition,
+        query_rows=query_rows,
     ).to_payload()
 
 
@@ -1630,16 +1893,25 @@ def _validate_history_declared_columns(
         raise ValueError(f"history_rows are missing time_column {schema.time_column!r}")
 
 
-def _serialize_history_rows(
-    history_rows: Sequence[Mapping[str, Any]],
+def _serialize_rows(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    field: str,
 ) -> list[dict[str, Any]]:
     return [
         {
-            key: _to_json_compatible(value, field=f"history_rows[{index}].{key}")
-            for key, value in history_row.items()
+            key: _to_json_compatible(value, field=f"{field}[{index}].{key}")
+            for key, value in row.items()
         }
-        for index, history_row in enumerate(history_rows)
+        for index, row in enumerate(rows)
     ]
+
+
+def _require_scored_value(value: Any, *, field: str) -> None:
+    if value is None:
+        raise ValueError(f"{field} must carry an observed value to score")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{field} must be finite")
 
 
 def _serialize_query_times(
@@ -1977,6 +2249,38 @@ def _require_output_float(value: Any, *, field: str) -> float:
     if not math.isfinite(parsed):
         raise ValueError(f"{field} must be finite")
     return parsed
+
+
+def _require_float_vector(
+    value: Any,
+    *,
+    field: str,
+    expected_length: int | None = None,
+) -> tuple[float, ...]:
+    values = _require_sequence(value, field=field)
+    _validate_length(
+        actual_length=len(values),
+        expected_length=expected_length,
+        field=field,
+    )
+    return tuple(
+        _require_output_float(item, field=f"{field}[{index}]")
+        for index, item in enumerate(values)
+    )
+
+
+def _require_derived_score(value: float, *, expected: float, field: str) -> float:
+    if not math.isclose(
+        value,
+        expected,
+        rel_tol=DERIVED_SCORE_TOLERANCE,
+        abs_tol=DERIVED_SCORE_TOLERANCE,
+    ):
+        raise ValueError(
+            f"{field} disagrees with outputs.log_prob.values: "
+            f"expected {expected}, got {value}"
+        )
+    return value
 
 
 def _require_float_matrix(

@@ -171,8 +171,15 @@ def infer_column_specs_from_dataframe(
 def dataframe_to_history_rows(
     frame: Any,
     schema: DataFrameSchema,
+    *,
+    field: str = "history_rows",
 ) -> list[dict[str, Any]]:
-    """Convert a pandas ``DataFrame`` into ordered JointFM ``history_rows``."""
+    """Convert a pandas ``DataFrame`` into ordered JointFM row payloads.
+
+    ``field`` names the payload array being built, so a bad value in the
+    observed rows of a scored request reports ``query_rows[...]`` rather than
+    pointing the caller at their history.
+    """
     pandas_module = _require_pandas()
     numpy_module = _require_numpy()
     if not isinstance(frame, pandas_module.DataFrame):
@@ -198,7 +205,7 @@ def dataframe_to_history_rows(
                 row_payload[column_name] = _time_index_value_to_json(
                     value,
                     time_index_mode=schema.time_index_mode,
-                    field=f"history_rows[{row_index}].{column_name}",
+                    field=f"{field}[{row_index}].{column_name}",
                     pandas_module=pandas_module,
                     numpy_module=numpy_module,
                 )
@@ -207,7 +214,7 @@ def dataframe_to_history_rows(
             row_payload[column_name] = _column_value_to_json(
                 value,
                 column_spec=column_spec,
-                field=f"history_rows[{row_index}].{column_name}",
+                field=f"{field}[{row_index}].{column_name}",
                 pandas_module=pandas_module,
                 numpy_module=numpy_module,
             )
@@ -298,12 +305,18 @@ def build_forecast_payload_from_dataframe(
     nullable_columns: Sequence[str] | None = None,
     bounds: ColumnBounds | None = None,
     condition: ConditionBlock | None = None,
+    query_rows: Any | None = None,
 ) -> dict[str, Any]:
     """Build a validated forecast payload from a pandas ``DataFrame``.
 
     Passing ``condition`` makes this a conditioning request: the payload then
     carries ``query_mode='condition'`` and the block, and the deployment
     answers the conditional at the one future position the block names.
+
+    ``query_rows`` carries the *observed* values at ``query_times`` that
+    ``return_mode='log_prob'`` scores — a ``DataFrame`` shaped like ``frame``,
+    or a sequence of row mappings. The two go together: neither is accepted
+    without the other.
     """
     column_specs = (
         infer_column_specs_from_dataframe(
@@ -337,6 +350,9 @@ def build_forecast_payload_from_dataframe(
         timezone=timezone,
     )
     history_rows = dataframe_to_history_rows(frame, schema)
+    query_row_payloads = (
+        None if query_rows is None else _query_rows_payload(query_rows, schema)
+    )
     normalized_query_times = validate_forecast_horizon(
         _history_times_from_dataframe(frame, schema),
         query_times,
@@ -355,7 +371,25 @@ def build_forecast_payload_from_dataframe(
         schema_version=schema_version,
         query_mode="forecast" if condition is None else "condition",
         condition=condition,
+        query_rows=query_row_payloads,
     )
+
+
+def _query_rows_payload(
+    query_rows: Any,
+    schema: DataFrameSchema,
+) -> list[dict[str, Any]]:
+    """Normalize observed scoring rows into row payloads.
+
+    A ``DataFrame`` goes through the same column encoding as the history, so a
+    categorical label or a timestamp is spelled identically in both arrays;
+    anything else is already a sequence of row mappings and is passed through
+    for ``ForecastRequest`` to validate.
+    """
+    pandas_module = _require_pandas()
+    if isinstance(query_rows, pandas_module.DataFrame):
+        return dataframe_to_history_rows(query_rows, schema, field="query_rows")
+    return [dict(row) for row in query_rows]
 
 
 def build_forecast_payload_from_arrays(

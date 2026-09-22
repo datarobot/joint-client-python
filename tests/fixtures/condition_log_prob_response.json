@@ -1,0 +1,36 @@
+{
+  "schema_version": "v3",
+  "image_version": "0.3.0",
+  "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
+  "checkpoint_version": "sdk-test",
+  "head": "gmm",
+  "query_mode": "condition",
+  "return_mode": "log_prob",
+  "outputs": {
+    "query_times": [3],
+    "requested_columns": ["target"],
+    "mean": null,
+    "samples": null,
+    "quantiles": null,
+    "log_prob": {
+      "values": [-1.75],
+      "nll_values": [1.75],
+      "total": -1.75,
+      "mean": -1.75,
+      "nll_total": 1.75,
+      "nll_mean": 1.75
+    }
+  },
+  "plausibility": {
+    "equality_log_density": -1.27,
+    "region_log_probability": null
+  },
+  "diagnostics": {
+    "history_rows": 2,
+    "horizon_count": 1,
+    "seed": 7,
+    "condition_draws": 500,
+    "interval_estimator": null
+  },
+  "errors": []
+}
