@@ -1,0 +1,51 @@
+{
+  "schema_version": "v3",
+  "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
+  "query_mode": "condition",
+  "return_mode": "log_prob",
+  "time_index_mode": "ordinal",
+  "columns": [
+    {
+      "name": "driver",
+      "modality": "numeric"
+    },
+    {
+      "name": "target",
+      "modality": "numeric",
+      "role": "target"
+    }
+  ],
+  "history_rows": [
+    {
+      "driver": 1.0,
+      "target": 10.0
+    },
+    {
+      "driver": 1.1,
+      "target": 11.0
+    }
+  ],
+  "query_times": [2, 3],
+  "requested_columns": ["target"],
+  "condition": {
+    "query_time_index": 1,
+    "conditions": [
+      {
+        "column": "driver",
+        "kind": "equality",
+        "value": 1.5
+      }
+    ]
+  },
+  "query_rows": [
+    {
+      "driver": 1.2,
+      "target": 12.0
+    },
+    {
+      "driver": 1.5,
+      "target": 13.0
+    }
+  ],
+  "seed": 7
+}

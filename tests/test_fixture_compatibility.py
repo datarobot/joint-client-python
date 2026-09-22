@@ -26,6 +26,7 @@ from jointfm_client import (
     HealthMetadata,
     SCHEMA_VERSION,
     JointFMServiceError,
+    LogProbResult,
     MeanForecastResult,
     QuantileForecastResult,
     SampleForecastResult,
@@ -77,6 +78,18 @@ def test_health_fixture_matches_current_service_contract(
             "forecast_quantiles_response",
             QuantileForecastResult,
             "quantiles",
+        ),
+        (
+            "forecast_log_prob_request",
+            "forecast_log_prob_response",
+            LogProbResult,
+            "log_prob",
+        ),
+        (
+            "condition_log_prob_request",
+            "condition_log_prob_response",
+            LogProbResult,
+            "log_prob",
         ),
     ],
 )

@@ -163,7 +163,7 @@ bootstrap_notebook(add_src_root=True)
 
 Run `task setup` first so VS Code can select the registered `Python (joint-client-python)` notebook kernel backed by this repository's `.venv`.
 
-The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, conditional forecasts, pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
+The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, conditional forecasts (one conditional read as a mean, as draws, as quantiles inside a bounded band, and as the log density of observed values, plus the ranking of candidate conditions), pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
 
 The current forecast request contract is:
 
