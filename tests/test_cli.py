@@ -48,7 +48,7 @@ class FakeHealthClient:
             "deployment-id/predictionsUnstructured"
         ),
         deployment_selector="deployment_id",
-        schema_version="v3",
+        schema_version="v4",
         model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
         deployment_id="deployment-id",
     )
@@ -58,7 +58,7 @@ class FakeHealthClient:
         del cache, refresh
         return HealthMetadata(
             status="ok",
-            schema_version="v3",
+            schema_version="v4",
             image_version="0.3.0",
             model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
             checkpoint_version="sdk-test",
@@ -172,7 +172,7 @@ def test_predict_command_writes_response_file(monkeypatch, tmp_path: Path) -> No
     request_file.write_text(
         json.dumps(
             {
-                "schema_version": "v3",
+                "schema_version": "v4",
                 "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
             }
         ),

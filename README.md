@@ -10,7 +10,7 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Import namespace: `jointfm_client`
 - Supported Python: `>=3.11`
 - Current SDK package version: `0.8.0`
-- Current JointFM service schema: `schema_version="v3"`
+- Current JointFM service schema: `schema_version="v4"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
@@ -50,7 +50,7 @@ Example deployment configuration:
 deployment:
 	datarobot_endpoint: https://app.datarobot.com/api/v2
 	datarobot_api_token: <token>
-	schema_version: v3
+	schema_version: v4
 	deployment_id: <deployment-id>
 	# Optional model-version pin; the SDK discovers it from /healthz when unset:
 	# model_version: jointfm-inference:0.3.0+ckpt.fin-2026-05-22
@@ -68,7 +68,7 @@ Equivalent `.env` deployment configuration:
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v3
+JOINTFM_SCHEMA_VERSION=v4
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
 # JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin-2026-05-22
@@ -78,7 +78,7 @@ Equivalent local REST configuration for a service started from the `joint` repos
 
 ```dotenv
 JOINTFM_LOCAL_BASE_URL=http://127.0.0.1:8080
-JOINTFM_SCHEMA_VERSION=v3
+JOINTFM_SCHEMA_VERSION=v4
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
 # JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
 ```
@@ -167,7 +167,7 @@ The bootstrap helper resolves the nearest src-layout Python project root, switch
 
 The current forecast request contract is:
 
-- `schema_version`: exactly `"v3"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
+- `schema_version`: exactly `"v4"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
 - `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller. Optional for `from_env()` clients: when `JOINTFM_MODEL_VERSION` is unset the SDK reads it from `/healthz` on first use; when set it acts as a drift-detection pin
 - `query_mode`: `"forecast"` for the unconditional forecast, or `"condition"` for a conditional query at one future position; the high-level helpers set it from whether a `condition` block was passed
 - `return_mode`: one of `"mean"`, `"samples"`, or `"quantiles"`
@@ -184,10 +184,10 @@ The `condition` query mode asks for the model's joint distribution at one future
 
 A column carries at most one condition, of either kind:
 
-- `EqualityCondition(column, value)` pins the column to a finite value. The pinned column leaves the read-out set, so it must not appear in `requested_columns`.
+- `EqualityCondition(column, value)` pins the column to a finite value. It stays nameable in `requested_columns` and reads back the value the request supplied, so a scenario answer lines up column for column with an unconditioned one.
 - `IntervalCondition(column, lower=None, upper=None)` confines the column to a range; `None` leaves that side open, and at least one side must be bounded. The column stays readable, and what comes back is its distribution inside the range.
 
-Every column without a condition is a read-out column, and at least one must remain. Pass the block to `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, or `forecast_quantiles(...)`:
+Every column without a condition is a read-out column, and at least one must remain. `requested_columns` chooses what the response carries independently of that, defaulting to every declared column in declared order. Pass the block to `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, or `forecast_quantiles(...)`:
 
 ```python
 from jointfm_client import ConditionBlock, EqualityCondition, IntervalCondition
@@ -227,7 +227,7 @@ Successful forecast responses preserve `schema_version`, `image_version`, `model
 
 ```json
 {
-	"schema_version": "v3",
+	"schema_version": "v4",
 	"errors": [
 		{
 			"code": "VALIDATION_ERROR",
@@ -242,7 +242,7 @@ Known error codes are `VALIDATION_ERROR`, `UNSUPPORTED_HEAD_QUERY_COMBINATION`, 
 
 ## Compatibility Policy
 
-The SDK supports only `schema_version="v3"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded service contract, or an unsupported `decoding_strategy`. Return modes and time-index modes must match the SDK's lists exactly. Query modes and condition kinds are derived by the service from the mounted head, so a deployment may advertise fewer of them than the SDK knows; it must advertise at least one query mode and nothing the SDK does not know.
+The SDK supports only `schema_version="v4"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded service contract, or an unsupported `decoding_strategy`. Return modes and time-index modes must match the SDK's lists exactly. Query modes and condition kinds are derived by the service from the mounted head, so a deployment may advertise fewer of them than the SDK knows; it must advertise at least one query mode and nothing the SDK does not know.
 
 Callers should pass an expected `model_version` when they already know which deployment artifact they intend to use. A mismatch is treated as a hard compatibility error rather than silently downgrading, guessing, or retrying another model.
 
@@ -284,7 +284,7 @@ Create `.env` from `.env.sample` or set the same values in your shell. A hosted 
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v3
+JOINTFM_SCHEMA_VERSION=v4
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Or: JOINTFM_DEPLOYMENT_IDS=chevron-id,research-id
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:

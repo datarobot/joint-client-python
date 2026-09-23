@@ -1,5 +1,5 @@
 {
-  "schema_version": "v3",
+  "schema_version": "v4",
   "image_version": "0.3.0",
   "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
   "checkpoint_version": "sdk-test",
@@ -8,7 +8,7 @@
   "return_mode": "log_prob",
   "outputs": {
     "query_times": [3],
-    "requested_columns": ["target"],
+    "requested_columns": ["driver", "target"],
     "mean": null,
     "samples": null,
     "quantiles": null,
