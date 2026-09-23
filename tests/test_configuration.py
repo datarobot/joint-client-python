@@ -47,7 +47,7 @@ class _HealthTransport:
 
     _METADATA: dict[str, object] = {
         "status": "ok",
-        "schema_version": "v3",
+        "schema_version": "v4",
         "image_version": "0.3.0",
         "model_version": "jointfm-inference:0.3.0+ckpt.yaml",
         "checkpoint_version": "yaml",
@@ -147,7 +147,7 @@ def test_load_settings_layers_config_below_dotenv_and_environment(
                     "datarobot_endpoint": "https://app.datarobot.com/api/v2",
                     "datarobot_api_token": "yaml-token",
                     "deployment_id": "yaml-deployment-id",
-                    "schema_version": "v3",
+                    "schema_version": "v4",
                     "model_version": "jointfm-inference:0.3.0+ckpt.yaml",
                 }
             },
@@ -191,7 +191,7 @@ def test_client_from_env_uses_transport_defaults_from_config(
                     "datarobot_endpoint": "https://app.datarobot.com/api/v2",
                     "datarobot_api_token": "yaml-token",
                     "deployment_id": "yaml-deployment-id",
-                    "schema_version": "v3",
+                    "schema_version": "v4",
                     "model_version": "jointfm-inference:0.3.0+ckpt.yaml",
                 },
                 "transport": {

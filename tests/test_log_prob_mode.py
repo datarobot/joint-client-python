@@ -20,9 +20,10 @@ three places, and the split below follows them. The request carries observed
 rows nothing else carries, and a projection narrower than the scored joint asks
 a different question than the caller believes they asked. The response carries
 a block with no column axis whose summary fields only repeat what ``values``
-already says. Under a condition the two meet: a pinned column leaves the
-read-out set but still has to be supplied, because the service refuses a row
-contradicting the pin rather than scoring it.
+already says. Under a condition the two meet: a pinned column is projected and
+supplied like any other, because the service refuses a row contradicting the
+pin rather than scoring it, while the score itself stays the conditional
+density of the columns the request does not condition.
 """
 
 from __future__ import annotations
@@ -170,18 +171,22 @@ def test_a_row_that_cannot_be_scored_is_refused_before_any_round_trip(
 
 def test_a_partial_projection_is_refused_because_it_scores_something_else() -> None:
     """Dropping a column would score a narrower joint than the caller believes."""
-    with pytest.raises(ValueError, match="every declared column in schema order"):
+    with pytest.raises(ValueError, match="every declared column in declared order"):
         _request(requested_columns=("target",))
 
 
-def test_a_pinned_column_is_the_one_column_a_score_may_leave_out() -> None:
-    """Conditioning fixes the column, and the contract forbids reading it back."""
-    pinned = _request(
-        requested_columns=("target",),
+def test_a_score_may_leave_out_no_column_at_all_under_a_condition() -> None:
+    """A condition excuses nothing: the scorer covers the whole declared joint.
+
+    Omitting the projection is the natural spelling, because the service's own
+    default already resolves to every declared column in declared order.
+    """
+    stated = _request(
+        requested_columns=("driver", "target"),
         query_rows=_PINNED_QUERY_ROWS,
         condition=_PIN_DRIVER,
     )
-    assert pinned.to_payload()["requested_columns"] == ["target"]
+    assert stated.to_payload()["requested_columns"] == ["driver", "target"]
 
     default_projection = _request(
         requested_columns=None,
@@ -190,8 +195,12 @@ def test_a_pinned_column_is_the_one_column_a_score_may_leave_out() -> None:
     )
     assert "requested_columns" not in default_projection.to_payload()
 
-    with pytest.raises(ValueError, match="lists pinned columns"):
-        _request(query_rows=_PINNED_QUERY_ROWS, condition=_PIN_DRIVER)
+    with pytest.raises(ValueError, match="every declared column in declared order"):
+        _request(
+            requested_columns=("target",),
+            query_rows=_PINNED_QUERY_ROWS,
+            condition=_PIN_DRIVER,
+        )
 
 
 @pytest.mark.parametrize(
@@ -201,7 +210,7 @@ def test_a_pinned_column_is_the_one_column_a_score_may_leave_out() -> None:
         (
             "condition_log_prob_request",
             _PIN_DRIVER,
-            ("target",),
+            ("driver", "target"),
             _PINNED_QUERY_ROWS,
         ),
     ],
@@ -329,7 +338,7 @@ def test_the_client_scores_under_a_condition(
         schema=_schema(),
         query_times=[2, 3],
         query_rows=list(_PINNED_QUERY_ROWS),
-        requested_columns=["target"],
+        requested_columns=["driver", "target"],
         model_version=_MODEL_VERSION,
         seed=7,
         condition=_PIN_DRIVER,

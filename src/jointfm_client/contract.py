@@ -37,7 +37,7 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 # pyproject.toml the way a hand-maintained literal here did.
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
-SCHEMA_VERSION: Final = "v3"
+SCHEMA_VERSION: Final = "v4"
 # The service sums and averages its log densities in the model's own precision,
 # so its summaries differ from a recomputation in the last few digits.
 DERIVED_SCORE_TOLERANCE: Final = 1e-6
@@ -317,8 +317,9 @@ class EqualityCondition:
 
     An equality condition is an event of probability zero under a continuous
     head, so the deployment answers it analytically rather than by filtering
-    draws. It fixes the column's value, which is why that column leaves the
-    read-out projection.
+    draws. It fixes the column's value, so a projection that names the column
+    reads that value back rather than a model output — which is what lets a
+    scenario answer line up column for column with an unconditioned one.
     """
 
     column: str
@@ -423,7 +424,7 @@ class ConditionBlock:
 
     @property
     def pinned_columns(self) -> tuple[str, ...]:
-        """Columns an equality condition fixes, which leave the read-out set."""
+        """Columns an equality condition fixes, whose answer is the request's own value."""
         return tuple(
             condition.column
             for condition in self.conditions
@@ -581,29 +582,17 @@ class ForecastRequest:
                 "reads out is the conditional distribution of the columns it does "
                 "not condition"
             )
-        requested = _resolve_requested_columns(
-            self.schema.columns, self.requested_columns
-        )
-        if requested is None:
-            return
-        requested_names = {value for value in requested if isinstance(value, str)}
-        pinned = sorted(set(block.pinned_columns) & requested_names)
-        if pinned:
-            raise ValueError(
-                f"requested_columns lists pinned columns {pinned}; an equality "
-                "condition fixes the value, so reading it back returns only what "
-                "the request supplied"
-            )
 
     def _validate_query_rows(self) -> None:
         """Check the observed rows a log-density request scores.
 
         The service scores the whole joint at each future position, so a row
         must carry every declared column and ``requested_columns`` must name
-        every readable one in schema order: a narrower projection would score a
-        different distribution than the caller believes it asked about. An
-        equality condition is the one exception, since it fixes its column's
-        value and the conditioning contract forbids reading it back.
+        every one of them in declared order: a narrower or reordered projection
+        would score a different distribution than the caller believes it asked
+        about. A ``condition`` block changes nothing here — its columns are
+        declared columns like any other — and omitting the field already
+        resolves to exactly this projection.
 
         Only two per-value failures are decidable without the deployment's own
         encoding and are checked here — a missing value and a non-finite number.
@@ -643,16 +632,11 @@ class ForecastRequest:
         )
         if requested is None:
             return
-        pinned = set(() if self.condition is None else self.condition.pinned_columns)
-        readable = [name for name in declared if name not in pinned]
-        if requested != readable:
-            excused = (
-                f", the pinned columns {sorted(pinned)} excepted" if pinned else ""
-            )
+        if requested != declared:
             raise ValueError(
                 "return_mode='log_prob' scores the whole joint, so "
-                "requested_columns must list every declared column in schema "
-                f"order{excused}: expected {readable}, got {requested}"
+                "requested_columns must list every declared column in declared "
+                f"order: expected {declared}, got {requested}"
             )
 
     def to_payload(self) -> dict[str, Any]:

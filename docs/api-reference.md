@@ -18,7 +18,7 @@ This reference covers the supported public Python surface exported by `jointfm_c
 | `DataFrameSchema` | Describes tabular history layout. Fields are `columns`, `time_index_mode`, `time_column`, `time_scale_seconds`, `use_local_normalized_time`, `calendar_id`, and `timezone`. |
 | `ForecastRequestMetadata` | Holds `schema_version`, `model_version`, `query_mode` (`forecast` or `condition`), and `return_mode` for one forecast request. |
 | `ForecastRequest` | Validated request object that combines metadata, schema, history rows, query times, requested columns, sample or quantile controls, `seed`, an optional `condition` block, and the optional `query_rows` a scored request supplies, then emits a JSON-compatible payload with `to_payload()`. `query_mode="condition"` and a `condition` block must appear together, as must `return_mode="log_prob"` and `query_rows`, and both are validated against the request's own schema and `query_times` before any round trip. |
-| `EqualityCondition` | One column of the conditioned position pinned to a finite `value`. The pinned column leaves the read-out set, so it must not appear in `requested_columns`. |
+| `EqualityCondition` | One column of the conditioned position pinned to a finite `value`. The column may be named in `requested_columns` like any other, and reads back the pinned value the request supplied. |
 | `IntervalCondition` | One column of the conditioned position confined to `[lower, upper]`; `None` leaves a side open, at least one side must be bounded, and `lower < upper`. The column stays readable and the response describes its distribution inside the range. |
 | `ConditionBlock` | Every condition of one request: `query_time_index` into the request's `query_times` and a sequence of `EqualityCondition` or `IntervalCondition` values, at most one per column. `kinds`, `pinned_columns`, and `conditioned_columns` expose what the capability gate and the request validation need. |
 | `ConditionPlausibility` | What the model thinks of the conditions it was given: `equality_log_density` of the pinned values and `region_log_probability` of the interval region, each `None` when the request carried no condition of that kind. Reported by the service and never refused on. |
@@ -80,7 +80,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `JointFMHTTPStatusError` | The service returns an HTTP error status. |
 | `JointFMServiceError` | A response body contains non-empty JointFM `errors`, including the case where HTTP status unexpectedly succeeded. |
 | `JointFMCompatibilityError` | Base class for fail-fast service compatibility failures. |
-| `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v3`. |
+| `UnsupportedSchemaVersionError` | The service or response advertises a schema version other than `v4`. |
 | `UnsupportedModelVersionError` | The service or response model version differs from the configured or requested version. |
 | `UnsupportedServiceContractError` | The service-health payload advertises mode capabilities or a `decoding_strategy` outside the recorded service contract, or a condition request targets a deployment that does not advertise the `condition` mode or one of the block's condition kinds. |
 
@@ -126,7 +126,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | --- | --- | --- |
 | `DATAROBOT_ENDPOINT` | Hosted calls | HTTPS DataRobot API v2 endpoint, normalized without a trailing slash and required to end in `/api/v2`. |
 | `DATAROBOT_API_TOKEN` | Hosted calls | Non-empty, whitespace-free API token used in the hosted bearer authorization header. |
-| `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v3`. |
+| `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v4`. |
 | `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
 | `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing (at least two unique IDs). Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`. `health()` uses the minimum reachable `max_sample_count` as the sample-batch cap; `health_instances()` sums reachable caps for overall parallel capacity and reports topology. |
@@ -157,7 +157,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | Field | Required | Description |
 | --- | --- | --- |
 | `request_type` | Optional | One of `"predict"` (default) or `"health"`. Forecast requests omit this field or set it to `"predict"`. |
-| `schema_version` | Yes | Must be `"v3"`. |
+| `schema_version` | Yes | Must be `"v4"`. |
 | `model_version` | Yes | Exact deployed model version expected by the caller. |
 | `query_mode` | Yes | `"forecast"` for the unconditional forecast or `"condition"` for a conditional query at one future position. |
 | `return_mode` | Yes | One of `"mean"`, `"samples"`, `"quantiles"`, or `"log_prob"`, covered by the `forecast_mean`, `forecast_samples`, `forecast_quantiles`, and `forecast_log_prob` helpers. |
@@ -166,12 +166,12 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | `history_rows` | Yes | Non-empty array of history row objects in the declared schema. |
 | `query_times` | Yes | Non-empty future forecast horizon values. Absolute datetimes are encoded timezone-stably. |
 | `time_column` | For absolute datetime, optional otherwise | Name of the history time column. It must not duplicate a modeled column name. |
-| `requested_columns` | Optional | Output column names or integer indices. Duplicates are rejected. Defaults to all modeled columns, minus the columns an equality condition pinned. Under `return_mode="log_prob"` an explicit list must name every readable column in schema order, because the score is joint over them. |
+| `requested_columns` | Optional | Output column names or integer indices, answered in the order given. Duplicates are rejected. Any declared column may be named, whatever its `role` and whatever a condition says about it. Defaults to every declared column in declared order, so a condition response and a forecast response over the same schema line up column for column. Under `return_mode="log_prob"` an explicit list must name every declared column in declared order, because the score is joint over them. |
 | `query_rows` | `log_prob` mode | Observed rows to score, one per entry of `query_times`, each carrying a value for every declared column. Required by `return_mode="log_prob"` and rejected for every other mode. A row that contradicts a condition — a pinned column given another value, or a bounded column outside its range — is refused by the service instead of scored. |
 | `n_samples` | Samples and quantiles controls | Positive sample count when sampling controls are needed. Oversized sample forecasts are batched automatically against the cap advertised in health metadata. |
 | `quantiles` | Quantiles mode | Quantile levels in `(0, 1)`, required for `return_mode="quantiles"`. |
 | `seed` | Optional | Integer random seed for reproducible stochastic outputs. |
-| `condition` | With `query_mode="condition"` | Object with `query_time_index` (index into `query_times`) and `conditions`, a list of `{"column", "kind": "equality", "value"}` or `{"column", "kind": "interval", "lower", "upper"}` entries with `null` for an open bound. At most one condition per column, at least one column left unconditioned, and no pinned column in `requested_columns`. Forbidden with any other query mode. |
+| `condition` | With `query_mode="condition"` | Object with `query_time_index` (index into `query_times`) and `conditions`, a list of `{"column", "kind": "equality", "value"}` or `{"column", "kind": "interval", "lower", "upper"}` entries with `null` for an open bound. At most one condition per column and at least one column left unconditioned. Forbidden with any other query mode. |
 | `time_scale_seconds` | Optional | Positive scale for continuous time indexes. |
 | `use_local_normalized_time` | Optional | Whether the service should use local normalized time features. |
 | `calendar_id` | Optional | Calendar identifier, defaulting to `pandas-default`. |
@@ -200,7 +200,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 
 | Field | Description |
 | --- | --- |
-| `schema_version` | Response schema, expected to be `"v3"`. |
+| `schema_version` | Response schema, expected to be `"v4"`. |
 | `image_version` | Service image version that produced the response. |
 | `model_version` | Model version that produced the response. |
 | `checkpoint_version` | Checkpoint version that produced the response. |
@@ -226,7 +226,7 @@ The string literals are exposed as `PREDICT_REQUEST_TYPE`, `HEALTH_REQUEST_TYPE`
 | Field | Description |
 | --- | --- |
 | `status` | Service status string. |
-| `schema_version` | Advertised schema version. The SDK requires `v3`. |
+| `schema_version` | Advertised schema version. The SDK requires `v4`. |
 | `image_version` | Running service image version. |
 | `model_version` | Running model version. |
 | `checkpoint_version` | Loaded checkpoint version. |

@@ -1,5 +1,5 @@
 {
-  "schema_version": "v3",
+  "schema_version": "v4",
   "model_version": "jointfm-inference:0.3.0+ckpt.sdk-test",
   "query_mode": "condition",
   "return_mode": "log_prob",
@@ -26,7 +26,7 @@
     }
   ],
   "query_times": [2, 3],
-  "requested_columns": ["target"],
+  "requested_columns": ["driver", "target"],
   "condition": {
     "query_time_index": 1,
     "conditions": [

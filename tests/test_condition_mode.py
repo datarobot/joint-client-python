@@ -97,7 +97,7 @@ def _health(
     """Build one advertisement without going through a transport."""
     return HealthMetadata(
         status="ok",
-        schema_version="v3",
+        schema_version="v4",
         image_version="0.3.0",
         model_version=_MODEL_VERSION,
         checkpoint_version="sdk-test",
@@ -198,14 +198,6 @@ def test_the_mode_and_the_block_must_agree() -> None:
         (
             ConditionBlock(
                 query_time_index=0,
-                conditions=(EqualityCondition(column="driver", value=1.0),),
-            ),
-            ("driver", "target"),
-            "pinned columns",
-        ),
-        (
-            ConditionBlock(
-                query_time_index=0,
                 conditions=(
                     EqualityCondition(column="driver", value=1.0),
                     EqualityCondition(column="hedge", value=0.5),
@@ -247,6 +239,38 @@ def test_an_interval_column_may_still_be_read_out() -> None:
     request = _request(block, requested_columns=("driver", "target"))
 
     assert request.to_payload()["requested_columns"] == ["driver", "target"]
+
+
+def test_a_pinned_column_may_be_read_out_in_any_position() -> None:
+    """A projection is condition-agnostic, so a pin is nameable like any column.
+
+    Its answer is the request's own value, which is what lets a scenario frame
+    be compared against an unconditioned one column for column.
+    """
+    block = ConditionBlock(
+        query_time_index=0,
+        conditions=(EqualityCondition(column="driver", value=1.0),),
+    )
+
+    request = _request(block, requested_columns=("target", "driver"))
+
+    assert request.to_payload()["requested_columns"] == ["target", "driver"]
+
+
+def test_omitting_the_projection_states_nothing_on_the_wire() -> None:
+    """The default lives in the service, so the client must not invent one.
+
+    A client-side default would be a second copy of the rule, free to drift from
+    the one the deployment actually applies.
+    """
+    block = ConditionBlock(
+        query_time_index=0,
+        conditions=(EqualityCondition(column="driver", value=1.0),),
+    )
+
+    payload = _request(block, requested_columns=None).to_payload()
+
+    assert "requested_columns" not in payload
 
 
 def test_the_payload_carries_the_block_the_service_parses() -> None:
@@ -394,7 +418,7 @@ class _ConditionTransport:
         assert isinstance(sample_count, int)
         start = sum(cast(int, earlier["n_samples"]) for earlier in self.payloads[:-1])
         return {
-            "schema_version": "v3",
+            "schema_version": "v4",
             "image_version": "0.3.0",
             "model_version": _MODEL_VERSION,
             "checkpoint_version": "sdk-test",
@@ -432,7 +456,7 @@ def _health_payload(
     """Build one health advertisement as the service serializes it."""
     return {
         "status": "ok",
-        "schema_version": "v3",
+        "schema_version": "v4",
         "image_version": "0.3.0",
         "model_version": _MODEL_VERSION,
         "checkpoint_version": "sdk-test",
