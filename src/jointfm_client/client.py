@@ -541,7 +541,8 @@ class JointFMClient:
         of ``query_times``, and the result is the model's log density of those
         values under its joint at that position. It therefore scores the whole
         joint, and ``requested_columns`` — when given at all — must name every
-        readable column in schema order.
+        declared column in declared order, which is what omitting it already
+        resolves to.
 
         With ``condition`` the score is taken under the conditional at the one
         future position the block names, and the service refuses rows that
