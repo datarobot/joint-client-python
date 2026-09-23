@@ -15,8 +15,9 @@
 """Tests for the ``condition`` query mode on the client side.
 
 Three surfaces are covered, and the split matters. The condition objects
-validate what is wrong independently of any deployment, so a caller learns it
-without a round trip. The capability gate refuses what *this* deployment has
+validate what is wrong independently of any deployment — including two
+conditions on one column at a shared position — so a caller learns it without a
+round trip. The capability gate refuses what *this* deployment has
 not advertised, which is the only way to know before paying for a request.
 The response parser reads back the two numbers the service reports and never
 refuses on, so acting on them stays the caller's decision.
@@ -31,7 +32,7 @@ import pytest
 
 from jointfm_client import (
     ColumnSpec,
-    ConditionBlock,
+    Condition,
     ConditionPlausibility,
     DataFrameSchema,
     EqualityCondition,
@@ -46,9 +47,10 @@ from jointfm_client import (
     build_forecast_payload,
     build_forecast_payload_from_dataframe,
     require_condition_support,
+    resolve_conditions,
     validate_service_metadata,
 )
-from jointfm_client.contract import QueryMode
+from jointfm_client.contract import QueryMode, condition_kinds
 from jointfm_client.exceptions import UnsupportedServiceContractError
 
 _MODEL_VERSION = "jointfm-inference:0.3.0+ckpt.sdk-test"
@@ -67,12 +69,12 @@ def _schema() -> DataFrameSchema:
 
 
 def _request(
-    block: ConditionBlock | None,
+    condition: Condition | list[Condition] | None,
     *,
     requested_columns: tuple[str, ...] | None = ("target",),
     query_mode: QueryMode = "condition",
 ) -> ForecastRequest:
-    """Build one condition request against the two-column schema."""
+    """Build one condition request against the three-column schema."""
     return ForecastRequest(
         metadata=ForecastRequestMetadata(
             model_version=_MODEL_VERSION,
@@ -85,7 +87,7 @@ def _request(
         ),
         query_times=(2, 3),
         requested_columns=requested_columns,
-        condition=block,
+        condition=condition,
     )
 
 
@@ -97,7 +99,7 @@ def _health(
     """Build one advertisement without going through a transport."""
     return HealthMetadata(
         status="ok",
-        schema_version="v4",
+        schema_version="v5",
         image_version="0.3.0",
         model_version=_MODEL_VERSION,
         checkpoint_version="sdk-test",
@@ -136,107 +138,183 @@ def test_an_interval_condition_rejects_a_range_that_bounds_nothing(
         IntervalCondition(column="driver", lower=lower, upper=upper)
 
 
-def test_a_block_rejects_two_conditions_on_one_column() -> None:
-    """A column carries at most one condition, of either kind."""
-    with pytest.raises(ValueError, match="more than one condition"):
-        ConditionBlock(
-            query_time_index=0,
-            conditions=(
-                EqualityCondition(column="driver", value=1.0),
-                IntervalCondition(column="driver", lower=0.0, upper=1.0),
-            ),
+@pytest.mark.parametrize(
+    ("positions", "message"),
+    [
+        ([], "must not be empty"),
+        ([0, 0], "more than once"),
+        ([-1], "must not be negative"),
+        ([True], "must hold integers"),
+        ("0", "JSON array"),
+    ],
+    ids=["empty", "duplicate", "negative", "bool", "string"],
+)
+def test_a_condition_rejects_positions_that_name_nothing_usable(
+    positions: Any, message: str
+) -> None:
+    """``None`` covers every position; an explicit list must name real, distinct ones."""
+    with pytest.raises(ValueError, match=message):
+        EqualityCondition(column="driver", value=1.0, query_time_indices=positions)
+
+
+def test_a_condition_keeps_its_positions_as_an_immutable_tuple() -> None:
+    """A frozen condition must not change because the caller's list did."""
+    positions = [0, 2]
+    condition = EqualityCondition(
+        column="driver", value=1.0, query_time_indices=positions
+    )
+    positions.append(1)
+
+    assert condition.query_time_indices == (0, 2)
+
+
+def test_one_condition_and_a_list_of_them_resolve_alike() -> None:
+    """A single condition is the one-element list, so callers need not wrap it."""
+    pin = EqualityCondition(column="driver", value=1.0)
+
+    assert resolve_conditions(pin) == (pin,)
+    assert resolve_conditions([pin]) == (pin,)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "overlap"),
+    [
+        ((0,), (0, 1), r"query_time_indices \[0\]"),
+        (None, (1,), "every position"),
+        (None, None, "every position"),
+    ],
+    ids=["explicit", "null_against_explicit", "null_against_null"],
+)
+def test_two_conditions_on_one_column_at_a_shared_position_are_refused(
+    first: tuple[int, ...] | None, second: tuple[int, ...] | None, overlap: str
+) -> None:
+    """A column carries one condition per position, whatever the two kinds are."""
+    with pytest.raises(
+        ValueError,
+        match=rf"'driver' carries more than one condition at {overlap}: "
+        r"condition\[1\] overlaps condition\[0\]",
+    ):
+        resolve_conditions(
+            [
+                EqualityCondition(column="driver", value=1.0, query_time_indices=first),
+                IntervalCondition(
+                    column="driver", lower=0.0, upper=2.0, query_time_indices=second
+                ),
+            ]
         )
 
 
-def test_a_block_reports_the_kinds_a_deployment_must_advertise() -> None:
-    """The gate needs the kinds, and each kind appears once however many columns use it."""
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(
+def test_one_column_may_carry_conditions_at_disjoint_positions() -> None:
+    """Disjoint positions never meet, so each keeps its own condition."""
+    conditions = resolve_conditions(
+        [
+            EqualityCondition(column="driver", value=1.0, query_time_indices=[0]),
+            EqualityCondition(column="driver", value=2.0, query_time_indices=[1]),
+        ]
+    )
+
+    assert len(conditions) == 2
+
+
+def test_different_columns_may_share_every_position() -> None:
+    """A pin and a band on different columns meet at a position; that is the point."""
+    conditions = resolve_conditions(
+        [
             EqualityCondition(column="driver", value=1.0),
-            IntervalCondition(column="target", lower=0.0, upper=None),
-        ),
+            IntervalCondition(column="hedge", lower=0.0, upper=None),
+        ]
     )
 
-    assert block.kinds == ("equality", "interval")
-    assert block.pinned_columns == ("driver",)
-    assert block.conditioned_columns == ("driver", "target")
+    assert condition_kinds(conditions) == ("equality", "interval")
 
 
-def test_the_mode_and_the_block_must_agree() -> None:
+@pytest.mark.parametrize(
+    ("condition", "message"),
+    [([], "must not be empty"), (["driver"], "must be an EqualityCondition")],
+    ids=["empty", "not_a_condition"],
+)
+def test_a_condition_list_must_hold_conditions(condition: Any, message: str) -> None:
+    """An empty list conditions nothing, and only the two condition kinds exist."""
+    with pytest.raises(ValueError, match=message):
+        resolve_conditions(condition)
+
+
+def test_the_mode_and_the_condition_must_agree() -> None:
     """One without the other means a different request than the caller wrote."""
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(EqualityCondition(column="driver", value=1.0),),
-    )
+    pin = EqualityCondition(column="driver", value=1.0)
 
     with pytest.raises(ValueError, match="go together"):
-        _request(block, query_mode="forecast")
+        _request(pin, query_mode="forecast")
     with pytest.raises(ValueError, match="go together"):
         _request(None)
 
 
 @pytest.mark.parametrize(
-    ("block", "requested_columns", "message"),
+    ("condition", "requested_columns", "message"),
     [
         (
-            ConditionBlock(
-                query_time_index=0,
-                conditions=(EqualityCondition(column="absent", value=1.0),),
-            ),
+            EqualityCondition(column="absent", value=1.0),
             ("target",),
             "undeclared columns",
         ),
         (
-            ConditionBlock(
-                query_time_index=9,
-                conditions=(EqualityCondition(column="driver", value=1.0),),
-            ),
+            EqualityCondition(column="driver", value=1.0, query_time_indices=[1, 9]),
             ("target",),
-            "outside the 2 requested future positions",
+            r"query_time_indices \[9\] outside the 2 requested future positions",
         ),
         (
-            ConditionBlock(
-                query_time_index=0,
-                conditions=(
-                    EqualityCondition(column="driver", value=1.0),
-                    EqualityCondition(column="hedge", value=0.5),
-                    EqualityCondition(column="target", value=2.0),
-                ),
-            ),
+            [
+                EqualityCondition(column="driver", value=1.0),
+                EqualityCondition(column="hedge", value=0.5),
+                EqualityCondition(column="target", value=2.0, query_time_indices=[1]),
+            ],
             None,
-            "log_prob",
+            "pinning every column at query_time_indices position 1.*log_prob",
         ),
         (
-            ConditionBlock(
-                query_time_index=0,
-                conditions=(
-                    EqualityCondition(column="driver", value=1.0),
-                    EqualityCondition(column="hedge", value=0.5),
-                    IntervalCondition(column="target", lower=0.0, upper=None),
+            [
+                EqualityCondition(column="driver", value=1.0, query_time_indices=[0]),
+                EqualityCondition(column="hedge", value=0.5, query_time_indices=[0]),
+                IntervalCondition(
+                    column="target", lower=0.0, upper=None, query_time_indices=[0]
                 ),
-            ),
+            ],
             None,
-            "at least one column unconditioned",
+            "at least one column unconditioned at query_time_indices position 0",
         ),
     ],
+    ids=["undeclared", "outside", "all_pinned", "all_conditioned"],
 )
 def test_a_request_is_checked_against_its_own_schema_before_any_round_trip(
-    block: ConditionBlock, requested_columns: tuple[str, ...] | None, message: str
+    condition: Condition | list[Condition],
+    requested_columns: tuple[str, ...] | None,
+    message: str,
 ) -> None:
-    """The caller learns which column name it got wrong without paying for a request."""
+    """The caller learns which column or position it got wrong without a request."""
     with pytest.raises(ValueError, match=message):
-        _request(block, requested_columns=requested_columns)
+        _request(condition, requested_columns=requested_columns)
+
+
+def test_every_column_may_be_conditioned_somewhere_if_never_all_at_once() -> None:
+    """The read-out rule holds per position, not over the request as a whole."""
+    request = _request(
+        [
+            EqualityCondition(column="driver", value=1.0),
+            EqualityCondition(column="hedge", value=0.5, query_time_indices=[0]),
+            EqualityCondition(column="target", value=2.0, query_time_indices=[1]),
+        ],
+        requested_columns=None,
+    )
+
+    assert len(request.to_payload()["conditions"]) == 3
 
 
 def test_an_interval_column_may_still_be_read_out() -> None:
     """An interval fixes a region, so the column's distribution inside it is an answer."""
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(IntervalCondition(column="driver", lower=0.5, upper=1.5),),
+    request = _request(
+        IntervalCondition(column="driver", lower=0.5, upper=1.5),
+        requested_columns=("driver", "target"),
     )
-
-    request = _request(block, requested_columns=("driver", "target"))
 
     assert request.to_payload()["requested_columns"] == ["driver", "target"]
 
@@ -247,12 +325,10 @@ def test_a_pinned_column_may_be_read_out_in_any_position() -> None:
     Its answer is the request's own value, which is what lets a scenario frame
     be compared against an unconditioned one column for column.
     """
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(EqualityCondition(column="driver", value=1.0),),
+    request = _request(
+        EqualityCondition(column="driver", value=1.0),
+        requested_columns=("target", "driver"),
     )
-
-    request = _request(block, requested_columns=("target", "driver"))
 
     assert request.to_payload()["requested_columns"] == ["target", "driver"]
 
@@ -263,18 +339,15 @@ def test_omitting_the_projection_states_nothing_on_the_wire() -> None:
     A client-side default would be a second copy of the rule, free to drift from
     the one the deployment actually applies.
     """
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(EqualityCondition(column="driver", value=1.0),),
-    )
-
-    payload = _request(block, requested_columns=None).to_payload()
+    payload = _request(
+        EqualityCondition(column="driver", value=1.0), requested_columns=None
+    ).to_payload()
 
     assert "requested_columns" not in payload
 
 
-def test_the_payload_carries_the_block_the_service_parses() -> None:
-    """The wire form names its position once and each condition names its kind."""
+def test_the_payload_carries_the_conditions_the_service_parses() -> None:
+    """Each condition names its kind and its positions, ``null`` covering them all."""
     payload = build_forecast_payload(
         model_version=_MODEL_VERSION,
         schema=_schema(),
@@ -282,51 +355,56 @@ def test_the_payload_carries_the_block_the_service_parses() -> None:
         query_times=(2, 3),
         requested_columns=("target",),
         query_mode="condition",
-        condition=ConditionBlock(
-            query_time_index=1,
-            conditions=(
-                EqualityCondition(column="driver", value=1.5),
-                IntervalCondition(column="target", lower=None, upper=12.0),
+        condition=[
+            EqualityCondition(column="driver", value=1.5),
+            IntervalCondition(
+                column="target", lower=None, upper=12.0, query_time_indices=[1]
             ),
-        ),
+        ],
     )
 
     assert payload["query_mode"] == "condition"
-    assert payload["condition"] == {
-        "query_time_index": 1,
-        "conditions": [
-            {"column": "driver", "kind": "equality", "value": 1.5},
-            {"column": "target", "kind": "interval", "lower": None, "upper": 12.0},
-        ],
-    }
+    assert "condition" not in payload
+    assert payload["conditions"] == [
+        {
+            "column": "driver",
+            "kind": "equality",
+            "value": 1.5,
+            "query_time_indices": None,
+        },
+        {
+            "column": "target",
+            "kind": "interval",
+            "lower": None,
+            "upper": 12.0,
+            "query_time_indices": [1],
+        },
+    ]
 
 
 def test_the_gate_refuses_a_deployment_that_advertises_no_condition_mode() -> None:
     """Discovery before the request is the point: the error must not cost a round trip."""
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(EqualityCondition(column="driver", value=1.0),),
-    )
+    pin = EqualityCondition(column="driver", value=1.0)
 
     with pytest.raises(
         UnsupportedServiceContractError, match="does not serve condition"
     ):
         require_condition_support(
-            _health(query_modes=("forecast",), condition_kinds=()), block
+            _health(query_modes=("forecast",), condition_kinds=()), pin
         )
 
 
 def test_the_gate_refuses_a_kind_the_deployment_does_not_answer() -> None:
-    """A deployment may serve one kind before the other; the block says which it needs."""
-    block = ConditionBlock(
-        query_time_index=0,
-        conditions=(IntervalCondition(column="driver", lower=0.0, upper=1.0),),
-    )
+    """A deployment may serve one kind before the other; the conditions say which."""
+    conditions = [
+        EqualityCondition(column="driver", value=1.0),
+        IntervalCondition(column="hedge", lower=0.0, upper=1.0),
+    ]
 
     with pytest.raises(UnsupportedServiceContractError, match=r"kinds \['interval'\]"):
-        require_condition_support(_health(condition_kinds=("equality",)), block)
+        require_condition_support(_health(condition_kinds=("equality",)), conditions)
 
-    require_condition_support(_health(), block)
+    require_condition_support(_health(), conditions)
 
 
 def test_the_equality_response_reads_back_its_plausibility(
@@ -348,20 +426,37 @@ def test_the_equality_response_reads_back_its_plausibility(
     assert response.diagnostics.interval_estimator is None
 
 
-def test_the_response_describes_the_conditioned_position_alone(
+def test_the_response_answers_every_requested_position(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """The request asked for two future rows; a condition answers about one."""
+    """The condition covers one of two rows, and the answer still carries both."""
     request_payload = json_fixture_loader("condition_mean_request")
     assert request_payload["query_times"] == [2, 3]
+    assert request_payload["conditions"][0]["query_time_indices"] == [1]
 
     response = ForecastResponse.from_payload(
         json_fixture_loader("condition_mean_response"),
         request_payload=request_payload,
     )
 
-    assert response.query_times == (3,)
-    assert response.diagnostics.horizon_count == 1
+    assert response.query_times == (2, 3)
+    assert response.diagnostics.horizon_count == 2
+
+
+def test_a_response_narrowed_to_the_covered_position_is_refused(
+    json_fixture_loader: Callable[[str], dict[str, Any]],
+) -> None:
+    """A deployment answering fewer positions than asked must fail, not parse."""
+    response_payload = json_fixture_loader("condition_mean_response")
+    response_payload["outputs"]["query_times"] = [3]
+    response_payload["outputs"]["mean"] = [[13.5]]
+    response_payload["diagnostics"]["horizon_count"] = 1
+
+    with pytest.raises(ValueError, match="query_times"):
+        ForecastResponse.from_payload(
+            response_payload,
+            request_payload=json_fixture_loader("condition_mean_request"),
+        )
 
 
 def test_an_interval_response_reads_back_its_estimator_accuracy(
@@ -418,7 +513,7 @@ class _ConditionTransport:
         assert isinstance(sample_count, int)
         start = sum(cast(int, earlier["n_samples"]) for earlier in self.payloads[:-1])
         return {
-            "schema_version": "v4",
+            "schema_version": "v5",
             "image_version": "0.3.0",
             "model_version": _MODEL_VERSION,
             "checkpoint_version": "sdk-test",
@@ -426,10 +521,12 @@ class _ConditionTransport:
             "query_mode": "condition",
             "return_mode": "samples",
             "outputs": {
-                "query_times": [3],
+                "query_times": [2, 3],
                 "requested_columns": ["target"],
                 "mean": None,
-                "samples": [[[float(start + index)]] for index in range(sample_count)],
+                "samples": [
+                    [[-1.0], [float(start + index)]] for index in range(sample_count)
+                ],
                 "quantiles": None,
             },
             "plausibility": {
@@ -438,7 +535,7 @@ class _ConditionTransport:
             },
             "diagnostics": {
                 "history_rows": 2,
-                "horizon_count": 1,
+                "horizon_count": 2,
                 "seed": payload.get("seed"),
                 "condition_draws": sample_count,
                 "interval_estimator": None,
@@ -456,7 +553,7 @@ def _health_payload(
     """Build one health advertisement as the service serializes it."""
     return {
         "status": "ok",
-        "schema_version": "v4",
+        "schema_version": "v5",
         "image_version": "0.3.0",
         "model_version": _MODEL_VERSION,
         "checkpoint_version": "sdk-test",
@@ -490,16 +587,13 @@ _HISTORY_ROWS = (
     {"driver": 1.0, "hedge": 0.5, "target": 10.0},
     {"driver": 1.1, "hedge": 0.6, "target": 11.0},
 )
-_PIN_DRIVER = ConditionBlock(
-    query_time_index=1,
-    conditions=(EqualityCondition(column="driver", value=1.5),),
-)
+_PIN_DRIVER = EqualityCondition(column="driver", value=1.5, query_time_indices=[1])
 
 
 def test_the_client_sends_the_condition_and_reads_the_answer_back(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """The typed helper carries the block onto the wire and types what comes back."""
+    """The typed helper carries the condition onto the wire and types what comes back."""
     transport = _ConditionTransport(
         health_payload=_health_payload(
             query_modes=["forecast", "condition"],
@@ -520,13 +614,13 @@ def test_the_client_sends_the_condition_and_reads_the_answer_back(
 
     assert isinstance(result, MeanForecastResult)
     assert result.query_mode == "condition"
-    assert result.query_times == (3,)
-    assert result.mean == ((13.5,),)
+    assert result.query_times == (2, 3)
+    assert result.mean == ((12.0,), (13.5,))
     assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
     assert len(transport.payloads) == 1
     sent = transport.payloads[0]
     assert sent["query_mode"] == "condition"
-    assert sent["condition"] == _PIN_DRIVER.to_payload()
+    assert sent["conditions"] == [_PIN_DRIVER.to_payload()]
 
 
 def test_the_client_refuses_before_posting_when_the_deployment_cannot_condition() -> (
@@ -552,7 +646,7 @@ def test_the_client_refuses_before_posting_when_the_deployment_cannot_condition(
 
 
 def test_batched_condition_samples_merge_into_one_conditional_answer() -> None:
-    """Every batch repeats the same block; the merge recounts the draws and keeps the plausibility."""
+    """Every batch repeats the same conditions; the merge recounts draws, keeps plausibility."""
     transport = _ConditionTransport(
         health_payload=_health_payload(
             query_modes=["forecast", "condition"],
@@ -573,20 +667,24 @@ def test_batched_condition_samples_merge_into_one_conditional_answer() -> None:
     )
 
     assert isinstance(result, SampleForecastResult)
-    assert result.samples == (((0.0,),), ((1.0,),), ((2.0,),))
-    assert result.query_times == (3,)
+    assert result.samples == (
+        ((-1.0,), (0.0,)),
+        ((-1.0,), (1.0,)),
+        ((-1.0,), (2.0,)),
+    )
+    assert result.query_times == (2, 3)
     assert result.diagnostics.condition_draws == 3
     assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
     assert [payload["n_samples"] for payload in transport.payloads] == [2, 1]
     assert all(
         payload["query_mode"] == "condition"
-        and payload["condition"] == _PIN_DRIVER.to_payload()
+        and payload["conditions"] == [_PIN_DRIVER.to_payload()]
         for payload in transport.payloads
     )
 
 
 def test_the_dataframe_adapter_builds_a_condition_request() -> None:
-    """A pandas caller passes the block and gets the condition envelope."""
+    """A pandas caller passes the conditions and gets the condition envelope."""
     pandas = pytest.importorskip("pandas")
     frame = pandas.DataFrame(list(_HISTORY_ROWS))
 
@@ -601,7 +699,7 @@ def test_the_dataframe_adapter_builds_a_condition_request() -> None:
     )
 
     assert payload["query_mode"] == "condition"
-    assert payload["condition"] == _PIN_DRIVER.to_payload()
+    assert payload["conditions"] == [_PIN_DRIVER.to_payload()]
     assert payload["requested_columns"] == ["target"]
 
 

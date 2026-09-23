@@ -1,5 +1,5 @@
 {
-  "schema_version": "v4",
+  "schema_version": "v5",
   "errors": [
     {
       "code": "MODEL_VERSION_MISMATCH",

@@ -10,7 +10,7 @@ The SDK targets the DataRobot-hosted unstructured prediction route and the same 
 - Import namespace: `jointfm_client`
 - Supported Python: `>=3.11`
 - Current SDK package version: `0.8.0`
-- Current JointFM service schema: `schema_version="v4"`
+- Current JointFM service schema: `schema_version="v5"`
 
 The public API shape is a synchronous low-level `JointFMClient` with `health()`, `health_instances()`, and `predict(payload)` methods plus high-level `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, and `forecast_quantiles(...)` helpers. The SDK is not a proxy service; callers use it as a local Python library that talks to the hosted or local JointFM endpoint.
 
@@ -50,7 +50,7 @@ Example deployment configuration:
 deployment:
 	datarobot_endpoint: https://app.datarobot.com/api/v2
 	datarobot_api_token: <token>
-	schema_version: v4
+	schema_version: v5
 	deployment_id: <deployment-id>
 	# Optional model-version pin; the SDK discovers it from /healthz when unset:
 	# model_version: jointfm-inference:0.3.0+ckpt.fin-2026-05-22
@@ -68,7 +68,7 @@ Equivalent `.env` deployment configuration:
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v4
+JOINTFM_SCHEMA_VERSION=v5
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
 # JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin-2026-05-22
@@ -78,7 +78,7 @@ Equivalent local REST configuration for a service started from the `joint` repos
 
 ```dotenv
 JOINTFM_LOCAL_BASE_URL=http://127.0.0.1:8080
-JOINTFM_SCHEMA_VERSION=v4
+JOINTFM_SCHEMA_VERSION=v5
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:
 # JOINTFM_MODEL_VERSION=jointfm-inference:0.3.0+ckpt.fin_i504_o63_f0_t10_h16l16_mam7_af_t3r1_cnn_k3l4_hpst_h16l2_studentt_m4cr2df8skew
 ```
@@ -167,51 +167,47 @@ The bootstrap helper resolves the nearest src-layout Python project root, switch
 
 The current forecast request contract is:
 
-- `schema_version`: exactly `"v4"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
+- `schema_version`: exactly `"v5"`, configured as `JOINTFM_SCHEMA_VERSION` for `from_env()` clients
 - `model_version`: exact model version advertised by `/healthz` or otherwise selected by the caller. Optional for `from_env()` clients: when `JOINTFM_MODEL_VERSION` is unset the SDK reads it from `/healthz` on first use; when set it acts as a drift-detection pin
-- `query_mode`: `"forecast"` for the unconditional forecast, or `"condition"` for a conditional query at one future position; the high-level helpers set it from whether a `condition` block was passed
+- `query_mode`: `"forecast"` for the unconditional forecast, or `"condition"` for the forecast given conditions on some columns; the high-level helpers set it from whether a `condition` was passed
 - `return_mode`: one of `"mean"`, `"samples"`, or `"quantiles"`
 - `time_index_mode`: one of `"ordinal"`, `"continuous_float"`, or `"absolute_datetime"`
 - `time_column`: required for `"absolute_datetime"`, and used for ordered ordinal or continuous histories when supplied
 - `query_times`: non-empty future forecast times only
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
 - `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`.
-- `condition`: required with `query_mode="condition"` and forbidden otherwise. A `ConditionBlock` naming one future position by its index into `query_times` and one condition per column, see below.
+- `condition`: required with `query_mode="condition"` and forbidden otherwise. One `EqualityCondition` or `IntervalCondition`, or a list of them, each covering the future positions its `query_time_indices` names; sent on the wire as the `conditions` list, see below.
 
 ### Conditional Queries
 
-The `condition` query mode asks for the model's joint distribution at one future position *given* something about some of its columns at that same position. Conditioning relates columns to each other within one position and never across horizons, so the block names the position once and the response describes that position alone: `outputs.query_times` carries exactly one entry however many `query_times` the request listed.
+The `condition` query mode asks for the forecast *given* something about some of its columns. Each condition names the future positions it covers by index into `query_times` through `query_time_indices`, and covers every position when that is `None`. Two conditions on the same column must cover disjoint positions; conditions on different columns may share positions, which is how one position mixes both kinds:
 
-A column carries at most one condition, of either kind:
+- `EqualityCondition(column, value, query_time_indices=None)` pins the column to a finite value. It stays nameable in `requested_columns` and reads back the value the request supplied, so a scenario answer lines up column for column with an unconditioned one.
+- `IntervalCondition(column, lower=None, upper=None, query_time_indices=None)` confines the column to a range; `None` leaves that side open, and at least one side must be bounded. The column stays readable, and what comes back is its distribution inside the range.
 
-- `EqualityCondition(column, value)` pins the column to a finite value. It stays nameable in `requested_columns` and reads back the value the request supplied, so a scenario answer lines up column for column with an unconditioned one.
-- `IntervalCondition(column, lower=None, upper=None)` confines the column to a range; `None` leaves that side open, and at least one side must be bounded. The column stays readable, and what comes back is its distribution inside the range.
-
-Every column without a condition is a read-out column, and at least one must remain. `requested_columns` chooses what the response carries independently of that, defaulting to every declared column in declared order. Pass the block to `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, or `forecast_quantiles(...)`:
+The response answers every entry of `query_times`. A position no condition covers carries the unconditioned forecast, and that is exact: the model draws each future position from its own joint, independently of the others, so a condition relates columns to each other within a position and never reaches another one. At every covered position at least one column must stay unconditioned, because what the position reads out is the conditional distribution of those columns. `requested_columns` chooses what the response carries independently of that, defaulting to every declared column in declared order. Pass one condition or a list of them to `forecast(...)`, `forecast_mean(...)`, `forecast_samples(...)`, `forecast_quantiles(...)`, or `forecast_log_prob(...)`:
 
 ```python
-from jointfm_client import ConditionBlock, EqualityCondition, IntervalCondition
+from jointfm_client import EqualityCondition, IntervalCondition
 
-block = ConditionBlock(
-	query_time_index=0,
-	conditions=[
-		EqualityCondition(column="equity_index_level", value=4780.0),
-		IntervalCondition(column="treasury_10y_yield", lower=0.041, upper=0.045),
-	],
-)
 result = client.forecast_mean(
 	history,
 	query_times=query_times,
 	requested_columns=["portfolio_nav", "realized_volatility"],
 	columns=plan.columns,
-	condition=block,
+	condition=[
+		EqualityCondition(column="equity_index_level", value=4780.0),
+		IntervalCondition(
+			column="treasury_10y_yield", lower=0.041, upper=0.045, query_time_indices=[0]
+		),
+	],
 )
 print(result.plausibility)
 ```
 
-Whether a deployment can condition depends on the mounted checkpoint's head. `/healthz` advertises `condition` in `supported_query_modes` and the kinds it answers in `supported_condition_kinds` (empty when the mode is absent). The client checks that advertisement before sending, so a deployment that cannot condition is refused with `UnsupportedServiceContractError` rather than after a paid round trip; `require_condition_support(metadata, block)` exposes the same check.
+Whether a deployment can condition depends on the mounted checkpoint's head. `/healthz` advertises `condition` in `supported_query_modes` and the kinds it answers in `supported_condition_kinds` (empty when the mode is absent). The client checks that advertisement before sending, so a deployment that cannot condition is refused with `UnsupportedServiceContractError` rather than after a paid round trip; `require_condition_support(metadata, condition)` exposes the same check.
 
-A condition response carries a `plausibility` block: `equality_log_density` is the log density the model assigns to the pinned values and `region_log_probability` the log probability it gives the interval region, each `None` when the request carried no condition of that kind. They separate a confident answer from one conditioned on something the model finds implausible; the service reports them and never refuses on them. `diagnostics.condition_draws` counts the draws behind sampled outputs, and `diagnostics.interval_estimator` reports the numerical accounting (`points`, `effective_sample_size`) when more than one column carries an interval and the region probability had to be estimated.
+A condition response carries a `plausibility` block: `equality_log_density` is the log density the model assigns to the pinned values and `region_log_probability` the log probability it gives the interval region, each `None` when the request carried no condition of that kind. Over several covered positions each is the sum of the per-position values, exact because positions are independent. They separate a confident answer from one conditioned on something the model finds implausible; the service reports them and never refuses on them. `diagnostics.condition_draws` counts the draws behind sampled outputs, and `diagnostics.interval_estimator` reports the numerical accounting (`points`, `effective_sample_size`) when some position bounds more than one column and its region probability had to be estimated; across several estimated positions it describes the one with the smallest effective sample size.
 
 Column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
 
@@ -227,7 +223,7 @@ Successful forecast responses preserve `schema_version`, `image_version`, `model
 
 ```json
 {
-	"schema_version": "v4",
+	"schema_version": "v5",
 	"errors": [
 		{
 			"code": "VALIDATION_ERROR",
@@ -242,7 +238,7 @@ Known error codes are `VALIDATION_ERROR`, `UNSUPPORTED_HEAD_QUERY_COMBINATION`, 
 
 ## Compatibility Policy
 
-The SDK supports only `schema_version="v4"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded service contract, or an unsupported `decoding_strategy`. Return modes and time-index modes must match the SDK's lists exactly. Query modes and condition kinds are derived by the service from the mounted head, so a deployment may advertise fewer of them than the SDK knows; it must advertise at least one query mode and nothing the SDK does not know.
+The SDK supports only `schema_version="v5"`. `validate_service_metadata()` checks `/healthz` metadata and raises typed compatibility errors before prediction if the service advertises a different schema, an unexpected model version, mode capabilities outside the recorded service contract, or an unsupported `decoding_strategy`. Return modes and time-index modes must match the SDK's lists exactly. Query modes and condition kinds are derived by the service from the mounted head, so a deployment may advertise fewer of them than the SDK knows; it must advertise at least one query mode and nothing the SDK does not know.
 
 Callers should pass an expected `model_version` when they already know which deployment artifact they intend to use. A mismatch is treated as a hard compatibility error rather than silently downgrading, guessing, or retrying another model.
 
@@ -284,7 +280,7 @@ Create `.env` from `.env.sample` or set the same values in your shell. A hosted 
 ```dotenv
 DATAROBOT_ENDPOINT=https://app.datarobot.com/api/v2
 DATAROBOT_API_TOKEN=<token>
-JOINTFM_SCHEMA_VERSION=v4
+JOINTFM_SCHEMA_VERSION=v5
 JOINTFM_DEPLOYMENT_ID=<deployment-id>
 # Or: JOINTFM_DEPLOYMENT_IDS=chevron-id,research-id
 # Optional drift-detection pin; the SDK discovers the model version from /healthz when unset:

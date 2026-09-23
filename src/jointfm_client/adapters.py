@@ -24,7 +24,7 @@ from typing import Any, TypeAlias, cast
 from jointfm_client.configuration import DEFAULT_FORECAST_SCHEMA_VERSION
 from jointfm_client.contract import (
     DEFAULT_CALENDAR_ID,
-    ConditionBlock,
+    Condition,
     ColumnModality,
     ColumnRole,
     ColumnSpec,
@@ -304,14 +304,15 @@ def build_forecast_payload_from_dataframe(
     time_value_columns: Sequence[str] | Mapping[str, TimeValueKind] | None = None,
     nullable_columns: Sequence[str] | None = None,
     bounds: ColumnBounds | None = None,
-    condition: ConditionBlock | None = None,
+    condition: Condition | Sequence[Condition] | None = None,
     query_rows: Any | None = None,
 ) -> dict[str, Any]:
     """Build a validated forecast payload from a pandas ``DataFrame``.
 
-    Passing ``condition`` makes this a conditioning request: the payload then
-    carries ``query_mode='condition'`` and the block, and the deployment
-    answers the conditional at the one future position the block names.
+    Passing ``condition`` — one condition or a list of them — makes this a
+    conditioning request: the payload then carries ``query_mode='condition'``
+    and the conditions, and the deployment answers every future position under
+    the conditions covering it.
 
     ``query_rows`` carries the *observed* values at ``query_times`` that
     ``return_mode='log_prob'`` scores — a ``DataFrame`` shaped like ``frame``,

@@ -37,7 +37,7 @@ FIRST_SUPPORTED_PYTHON_VERSION: Final = "3.11"
 # pyproject.toml the way a hand-maintained literal here did.
 PACKAGE_VERSION: Final = importlib.metadata.version(DISTRIBUTION_NAME)
 
-SCHEMA_VERSION: Final = "v4"
+SCHEMA_VERSION: Final = "v5"
 # The service sums and averages its log densities in the model's own precision,
 # so its summaries differ from a recomputation in the last few digits.
 DERIVED_SCORE_TOLERANCE: Final = 1e-6
@@ -311,19 +311,37 @@ class DataFrameSchema:
         return payload
 
 
+def _require_query_time_indices(value: Any) -> tuple[int, ...] | None:
+    """Validate the positions one condition covers, ``None`` meaning every one."""
+    if value is None:
+        return None
+    indices = _require_sequence(value, field="condition.query_time_indices")
+    for index in indices:
+        if isinstance(index, bool) or not isinstance(index, int):
+            raise ValueError("condition.query_time_indices must hold integers")
+        if index < 0:
+            raise ValueError("condition.query_time_indices must not be negative")
+    if len(set(indices)) != len(indices):
+        raise ValueError("condition.query_time_indices names a position more than once")
+    return tuple(indices)
+
+
 @dataclass(frozen=True, slots=True)
 class EqualityCondition:
-    """One column of the conditioned position pinned to a value.
+    """One column pinned to a value at the future positions it covers.
 
-    An equality condition is an event of probability zero under a continuous
-    head, so the deployment answers it analytically rather than by filtering
-    draws. It fixes the column's value, so a projection that names the column
-    reads that value back rather than a model output — which is what lets a
-    scenario answer line up column for column with an unconditioned one.
+    ``query_time_indices`` names those positions by index into the request's
+    ``query_times``; ``None`` covers every one of them. An equality condition
+    is an event of probability zero under a continuous head, so the deployment
+    answers it analytically rather than by filtering draws. It fixes the
+    column's value, so a projection that names the column reads that value back
+    at every covered position rather than a model output — which is what lets
+    a scenario answer line up column for column with an unconditioned one.
     """
 
     column: str
     value: float
+    query_time_indices: Sequence[int] | None = None
 
     def __post_init__(self) -> None:
         """Reject a pin the service would refuse anyway."""
@@ -332,25 +350,37 @@ class EqualityCondition:
             raise ValueError("condition value must be a number")
         if not math.isfinite(float(self.value)):
             raise ValueError("condition value must be finite")
+        object.__setattr__(
+            self,
+            "query_time_indices",
+            _require_query_time_indices(self.query_time_indices),
+        )
 
     def to_payload(self) -> dict[str, Any]:
         """Return this condition as JSON-compatible payload fields."""
-        return {"column": self.column, "kind": "equality", "value": float(self.value)}
+        return {
+            "column": self.column,
+            "kind": "equality",
+            "value": float(self.value),
+            "query_time_indices": _query_time_indices_payload(self),
+        }
 
 
 @dataclass(frozen=True, slots=True)
 class IntervalCondition:
-    """One column of the conditioned position confined to a range.
+    """One column confined to a range at the future positions it covers.
 
-    ``None`` on either side leaves it open. The region carries positive mass,
-    so the deployment answers it by composition on the reduced mixture, and the
-    column stays readable: what it returns is its distribution inside the
-    region.
+    ``None`` on either side leaves the range open, and ``query_time_indices``
+    of ``None`` covers every requested position. The region carries positive
+    mass, so the deployment answers it by composition on the reduced mixture,
+    and the column stays readable: what it returns is its distribution inside
+    the region.
     """
 
     column: str
     lower: float | None = None
     upper: float | None = None
+    query_time_indices: Sequence[int] | None = None
 
     def __post_init__(self) -> None:
         """Reject a range that bounds nothing or bounds it backwards."""
@@ -374,6 +404,11 @@ class IntervalCondition:
             raise ValueError(
                 f"condition needs lower < upper, got [{self.lower}, {self.upper}]"
             )
+        object.__setattr__(
+            self,
+            "query_time_indices",
+            _require_query_time_indices(self.query_time_indices),
+        )
 
     def to_payload(self) -> dict[str, Any]:
         """Return this condition as JSON-compatible payload fields."""
@@ -382,78 +417,85 @@ class IntervalCondition:
             "kind": "interval",
             "lower": None if self.lower is None else float(self.lower),
             "upper": None if self.upper is None else float(self.upper),
+            "query_time_indices": _query_time_indices_payload(self),
         }
 
 
-@dataclass(frozen=True, slots=True)
-class ConditionBlock:
-    """Every condition of one request, against one future position.
+Condition: TypeAlias = EqualityCondition | IntervalCondition
 
-    The position is named once, by its index into the request's
-    ``query_times``, because conditioning relates variables to each other
-    within a position and never across horizons. A statement spanning
-    horizons is out of reach of this mode and cannot be expressed here.
+
+def _query_time_indices_payload(condition: Condition) -> list[int] | None:
+    """Serialize a condition's positions, ``None`` staying the wire's ``null``."""
+    if condition.query_time_indices is None:
+        return None
+    return list(condition.query_time_indices)
+
+
+def _covers(condition: Condition, position: int) -> bool:
+    """Return whether ``condition`` applies at future ``position``."""
+    return (
+        condition.query_time_indices is None or position in condition.query_time_indices
+    )
+
+
+def resolve_conditions(
+    condition: Condition | Sequence[Condition],
+) -> tuple[Condition, ...]:
+    """Normalize one condition or a list of them into a validated tuple.
+
+    Conditions on different columns may cover the same positions, which is how
+    one position mixes a pin and a band. Two conditions on the *same* column
+    must cover disjoint positions, because a column carries at most one
+    condition per position; ``query_time_indices=None`` covers every position,
+    so it overlaps any other condition on its column.
+
+    Raises:
+        ValueError: when the list is empty, holds something other than an
+            ``EqualityCondition`` or ``IntervalCondition``, or puts two
+            conditions on one column at a shared position.
     """
-
-    query_time_index: int
-    conditions: Sequence[EqualityCondition | IntervalCondition]
-
-    def __post_init__(self) -> None:
-        """Validate the block independently of any schema or deployment."""
-        if isinstance(self.query_time_index, bool) or not isinstance(
-            self.query_time_index, int
-        ):
-            raise ValueError("query_time_index must be an integer")
-        if self.query_time_index < 0:
-            raise ValueError("query_time_index must not be negative")
-        conditions = _require_sequence(self.conditions, field="conditions")
-        if not conditions:
-            raise ValueError("a condition block must carry at least one condition")
-        seen: set[str] = set()
-        for index, condition in enumerate(conditions):
-            if not isinstance(condition, (EqualityCondition, IntervalCondition)):
-                raise ValueError(
-                    f"conditions[{index}] must be an EqualityCondition or an "
-                    "IntervalCondition"
-                )
-            if condition.column in seen:
-                raise ValueError(
-                    f"column {condition.column!r} carries more than one condition"
-                )
-            seen.add(condition.column)
-
-    @property
-    def pinned_columns(self) -> tuple[str, ...]:
-        """Columns an equality condition fixes, whose answer is the request's own value."""
-        return tuple(
-            condition.column
-            for condition in self.conditions
-            if isinstance(condition, EqualityCondition)
-        )
-
-    @property
-    def conditioned_columns(self) -> tuple[str, ...]:
-        """Every column this block conditions, of either kind."""
-        return tuple(condition.column for condition in self.conditions)
-
-    @property
-    def kinds(self) -> tuple[ConditionKind, ...]:
-        """The condition kinds this block uses, which a deployment must advertise."""
-        kinds: list[ConditionKind] = []
-        for condition in self.conditions:
-            kind: ConditionKind = (
-                "equality" if isinstance(condition, EqualityCondition) else "interval"
+    conditions: tuple[Any, ...] = (
+        (condition,)
+        if isinstance(condition, (EqualityCondition, IntervalCondition))
+        else tuple(_require_sequence(condition, field="condition"))
+    )
+    for index, entry in enumerate(conditions):
+        if not isinstance(entry, (EqualityCondition, IntervalCondition)):
+            raise ValueError(
+                f"condition[{index}] must be an EqualityCondition or an "
+                "IntervalCondition"
             )
-            if kind not in kinds:
-                kinds.append(kind)
-        return tuple(kinds)
+    for later_index, later in enumerate(conditions):
+        for earlier_index, earlier in enumerate(conditions[:later_index]):
+            if earlier.column != later.column:
+                continue
+            if earlier.query_time_indices is None or later.query_time_indices is None:
+                overlap = "every position"
+            else:
+                shared = sorted(
+                    set(earlier.query_time_indices) & set(later.query_time_indices)
+                )
+                if not shared:
+                    continue
+                overlap = f"query_time_indices {shared}"
+            raise ValueError(
+                f"column {later.column!r} carries more than one condition at "
+                f"{overlap}: condition[{later_index}] overlaps "
+                f"condition[{earlier_index}]"
+            )
+    return cast(tuple[Condition, ...], conditions)
 
-    def to_payload(self) -> dict[str, Any]:
-        """Return the block as JSON-compatible payload fields."""
-        return {
-            "query_time_index": self.query_time_index,
-            "conditions": [condition.to_payload() for condition in self.conditions],
-        }
+
+def condition_kinds(conditions: Sequence[Condition]) -> tuple[ConditionKind, ...]:
+    """Return the condition kinds ``conditions`` use, which a deployment must advertise."""
+    kinds: list[ConditionKind] = []
+    for condition in conditions:
+        kind: ConditionKind = (
+            "equality" if isinstance(condition, EqualityCondition) else "interval"
+        )
+        if kind not in kinds:
+            kinds.append(kind)
+    return tuple(kinds)
 
 
 @dataclass(frozen=True, slots=True)
@@ -506,7 +548,7 @@ class ForecastRequest:
     quantiles: Sequence[float | int] | None = None
     seed: int | None = None
     query_row_ids: Sequence[int] | None = None
-    condition: ConditionBlock | None = None
+    condition: Condition | Sequence[Condition] | None = None
     query_rows: Sequence[Mapping[str, Any]] | None = None
 
     def __post_init__(self) -> None:
@@ -531,7 +573,7 @@ class ForecastRequest:
 
         if (self.metadata.query_mode == "condition") != (self.condition is not None):
             raise ValueError(
-                "query_mode='condition' and a condition block go together: one "
+                "query_mode='condition' and a condition go together: one "
                 "without the other means a different request than the caller wrote"
             )
         if self.condition is not None:
@@ -553,34 +595,50 @@ class ForecastRequest:
             self._validate_query_rows()
 
     def _validate_condition(self) -> None:
-        """Check the condition block against this request's schema and horizons.
+        """Check the conditions against this request's schema and positions.
 
         The deployment rejects all of this too, before executing anything; the
-        point of repeating it here is that a caller learns which column name it
-        got wrong without paying for a round trip.
+        point of repeating it here is that a caller learns which column name or
+        position it got wrong without paying for a round trip.
         """
-        block = self.condition
-        assert block is not None
+        assert self.condition is not None
+        conditions = resolve_conditions(self.condition)
         declared = {column.name for column in self.schema.columns}
-        unknown = [name for name in block.conditioned_columns if name not in declared]
+        unknown = [
+            condition.column
+            for condition in conditions
+            if condition.column not in declared
+        ]
         if unknown:
             raise ValueError(f"condition references undeclared columns {unknown}")
         horizon_count = len(_require_sequence(self.query_times, field="query_times"))
-        if block.query_time_index >= horizon_count:
-            raise ValueError(
-                f"condition.query_time_index {block.query_time_index} is outside the "
-                f"{horizon_count} requested future positions"
-            )
-        if len(set(block.conditioned_columns)) >= len(declared):
-            if len(block.pinned_columns) == len(set(block.conditioned_columns)):
+        for condition in conditions:
+            outside = [
+                index
+                for index in condition.query_time_indices or ()
+                if index >= horizon_count
+            ]
+            if outside:
                 raise ValueError(
-                    "pinning every column leaves nothing to read out; the joint "
-                    "density of those values is what return_mode='log_prob' answers"
+                    f"condition on {condition.column!r} names query_time_indices "
+                    f"{outside} outside the {horizon_count} requested future positions"
+                )
+        for position in range(horizon_count):
+            covering = [
+                condition for condition in conditions if _covers(condition, position)
+            ]
+            if len(covering) < len(declared):
+                continue
+            if all(isinstance(condition, EqualityCondition) for condition in covering):
+                raise ValueError(
+                    f"pinning every column at query_time_indices position {position} "
+                    "leaves nothing to read out; the joint density of those values "
+                    "is what return_mode='log_prob' answers"
                 )
             raise ValueError(
-                "a request must leave at least one column unconditioned: what it "
-                "reads out is the conditional distribution of the columns it does "
-                "not condition"
+                "a request must leave at least one column unconditioned at "
+                f"query_time_indices position {position}: what it reads out is "
+                "the conditional distribution of the columns it does not condition"
             )
 
     def _validate_query_rows(self) -> None:
@@ -590,7 +648,7 @@ class ForecastRequest:
         must carry every declared column and ``requested_columns`` must name
         every one of them in declared order: a narrower or reordered projection
         would score a different distribution than the caller believes it asked
-        about. A ``condition`` block changes nothing here — its columns are
+        about. A ``condition`` changes nothing here — its columns are
         declared columns like any other — and omitting the field already
         resolves to exactly this projection.
 
@@ -663,7 +721,10 @@ class ForecastRequest:
         if self.seed is not None:
             payload["seed"] = self.seed
         if self.condition is not None:
-            payload["condition"] = self.condition.to_payload()
+            payload["conditions"] = [
+                condition.to_payload()
+                for condition in resolve_conditions(self.condition)
+            ]
         if self.query_rows is not None:
             payload["query_rows"] = _serialize_rows(self.query_rows, field="query_rows")
         return payload
@@ -850,9 +911,12 @@ class StructuredError:
 class IntervalEstimator:
     """How a multi-column region's probability was estimated.
 
-    Present only when the interval block spans more than one column, which is
-    the only case where a component's box probability has to be estimated; one
+    Present only when some position bounds more than one column, which is the
+    only case where a component's box probability has to be estimated; one
     interval column is exact, and a number that never varies would say nothing.
+    When several positions are estimated, the accounting describes the one with
+    the smallest effective sample size, because that position bounds how far
+    the whole response can be trusted.
     """
 
     points: int
@@ -883,14 +947,17 @@ class ConditionPlausibility:
     kind. The service reports them and never refuses on them, so acting on them
     is the caller's decision.
 
-    Each number is joint over its whole condition block rather than one value
+    Each number is joint over every condition of its kind rather than one value
     per column: ``equality_log_density`` covers every pinned value at once, and
     ``region_log_probability`` covers the whole box at once. Do not rebuild
     either by multiplying per-column numbers, which would assume the columns are
-    independent and so discard what a joint model is for.
+    independent and so discard what a joint model is for. Across positions the
+    numbers *are* sums: the deployment draws each future position from its own
+    joint, independently of the others, so the value for a request covering
+    several positions is the sum of the per-position values, exactly.
 
     ``region_log_probability`` is measured *after* the pinned columns are
-    applied, so on a request carrying both kinds it is the log probability of
+    applied, so at a position carrying both kinds it is the log probability of
     the box **given the pins**, not the box's own. The two therefore chain, and
     their sum is the plausibility of the whole condition set::
 
@@ -1628,7 +1695,7 @@ def build_forecast_payload(
     seed: int | None = None,
     schema_version: str = SCHEMA_VERSION,
     query_mode: QueryMode = "forecast",
-    condition: ConditionBlock | None = None,
+    condition: Condition | Sequence[Condition] | None = None,
     query_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a validated JSON-compatible forecast request payload."""
@@ -1653,7 +1720,7 @@ def build_forecast_payload(
 
 def require_condition_support(
     metadata: HealthMetadata,
-    block: ConditionBlock,
+    condition: Condition | Sequence[Condition],
 ) -> None:
     """Refuse a conditioning request the mounted deployment has not advertised.
 
@@ -1664,7 +1731,7 @@ def require_condition_support(
 
     Raises:
         UnsupportedServiceContractError: when the deployment serves no
-            ``condition`` mode, or none of the condition kinds this block uses.
+            ``condition`` mode, or not every condition kind ``condition`` uses.
     """
     if "condition" not in metadata.supported_query_modes:
         raise UnsupportedServiceContractError(
@@ -1672,7 +1739,9 @@ def require_condition_support(
             f"queries; it advertises {list(metadata.supported_query_modes)}"
         )
     missing = [
-        kind for kind in block.kinds if kind not in metadata.supported_condition_kinds
+        kind
+        for kind in condition_kinds(resolve_conditions(condition))
+        if kind not in metadata.supported_condition_kinds
     ]
     if missing:
         raise UnsupportedServiceContractError(
@@ -2063,18 +2132,6 @@ def _forecast_response_expectations(
             isinstance(value, str) and value != "" for value in requested_column_values
         ):
             requested_columns = tuple(requested_column_values)
-
-    condition_value = request_payload.get("condition")
-    if condition_value is not None and query_times is not None:
-        condition_block = _require_mapping(
-            condition_value, field="request_payload.condition"
-        )
-        conditioned_index = condition_block.get("query_time_index")
-        if isinstance(conditioned_index, int) and not isinstance(
-            conditioned_index, bool
-        ):
-            if 0 <= conditioned_index < len(query_times):
-                query_times = (query_times[conditioned_index],)
 
     query_mode_value = request_payload.get("query_mode")
     return_mode_value = request_payload.get("return_mode")

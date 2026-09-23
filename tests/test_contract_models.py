@@ -76,7 +76,7 @@ def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> N
     )
 
     assert metadata.to_payload() == {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "quantiles",
@@ -91,7 +91,7 @@ def test_request_models_serialize_direct_payloads_without_mutating_inputs() -> N
         "timezone": "UTC",
     }
     assert request.to_payload() == {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "quantiles",
@@ -303,7 +303,7 @@ def test_response_models_reject_direct_validation_edges() -> None:
 def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
     """Forecast response rejects request scoped metadata mismatches."""
     request_payload = {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "mean",
@@ -354,7 +354,7 @@ def test_forecast_response_rejects_request_scoped_metadata_mismatches() -> None:
 def test_forecast_response_rejects_sample_bound_violations() -> None:
     """Forecast response rejects sample bound violations."""
     request_payload = {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "query_mode": "forecast",
         "return_mode": "samples",
@@ -397,7 +397,7 @@ def test_forecast_response_rejects_sample_bound_violations() -> None:
 def _mean_response_payload() -> dict[str, Any]:
     """Mean response payload."""
     return {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "image_version": "0.3.0",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
@@ -419,7 +419,7 @@ def _mean_response_payload() -> dict[str, Any]:
 def _sample_response_payload() -> dict[str, Any]:
     """Sample response payload."""
     return {
-        "schema_version": "v4",
+        "schema_version": "v5",
         "image_version": "0.3.0",
         "model_version": "jointfm-inference:0.3.0+ckpt.smoke-1",
         "checkpoint_version": "smoke-1",
