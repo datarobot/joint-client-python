@@ -35,7 +35,7 @@ import pytest
 
 from jointfm_client import (
     ColumnSpec,
-    ConditionBlock,
+    Condition,
     ConditionPlausibility,
     DataFrameSchema,
     EqualityCondition,
@@ -61,10 +61,7 @@ _PINNED_QUERY_ROWS = (
     {"driver": 1.2, "target": 12.0},
     {"driver": 1.5, "target": 13.0},
 )
-_PIN_DRIVER = ConditionBlock(
-    query_time_index=1,
-    conditions=(EqualityCondition(column="driver", value=1.5),),
-)
+_PIN_DRIVER = EqualityCondition(column="driver", value=1.5, query_time_indices=[1])
 
 
 def _schema() -> DataFrameSchema:
@@ -83,7 +80,7 @@ def _request(
     return_mode: ReturnMode = "log_prob",
     query_rows: Any = _QUERY_ROWS,
     requested_columns: tuple[str, ...] | None = ("driver", "target"),
-    condition: ConditionBlock | None = None,
+    condition: Condition | None = None,
 ) -> ForecastRequest:
     """Build one scoring request against the two-column schema."""
     return ForecastRequest(
@@ -218,7 +215,7 @@ def test_a_score_may_leave_out_no_column_at_all_under_a_condition() -> None:
 def test_the_payload_carries_the_rows_the_service_scores(
     json_fixture_loader: Callable[[str], dict[str, Any]],
     fixture_name: str,
-    condition: ConditionBlock | None,
+    condition: Condition | None,
     requested_columns: tuple[str, ...],
     query_rows: tuple[Mapping[str, Any], ...],
 ) -> None:
@@ -324,7 +321,7 @@ def test_the_client_scores_observed_rows_and_types_the_answer(
 def test_the_client_scores_under_a_condition(
     json_fixture_loader: Callable[[str], dict[str, Any]],
 ) -> None:
-    """A conditioned score answers at the conditioned position and reports its pin."""
+    """A conditioned score answers every position and reports its pin."""
     health_payload = json_fixture_loader("health_metadata")
     health_payload["supported_query_modes"] = ["forecast", "condition"]
     health_payload["supported_condition_kinds"] = ["equality", "interval"]
@@ -345,8 +342,8 @@ def test_the_client_scores_under_a_condition(
     )
 
     assert isinstance(result, LogProbResult)
-    assert result.query_times == (3,)
-    assert result.log_prob.values == (-1.75,)
+    assert result.query_times == (2, 3)
+    assert result.log_prob.values == (-2.5, -1.75)
     assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
     sent = transport.payloads[0]
     assert sent["query_mode"] == "condition"

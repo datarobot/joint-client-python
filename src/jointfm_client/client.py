@@ -36,7 +36,7 @@ from jointfm_client.configuration import (
     load_configuration,
 )
 from jointfm_client.contract import (
-    ConditionBlock,
+    Condition,
     DEFAULT_CALENDAR_ID,
     HEALTH_REQUEST_TYPE,
     SCHEMA_VERSION,
@@ -313,15 +313,21 @@ class JointFMClient:
         nullable_columns: Sequence[str] | None = None,
         bounds: Mapping[str, tuple[float | int | None, float | int | None]]
         | None = None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
         query_rows: Any | None = None,
     ) -> ForecastResponse:
         """Build and submit a forecast request from tabular history inputs.
 
-        Passing ``condition`` asks the deployment for the conditional at the one
-        future position the block names, instead of the unconditional forecast.
-        The deployment's advertised capability is checked first, so a deployment
-        that cannot condition is refused here rather than after a round trip.
+        Passing ``condition`` — one ``EqualityCondition`` or
+        ``IntervalCondition``, or a list of them — asks the deployment for the
+        forecast given those conditions. Each condition covers the positions its
+        ``query_time_indices`` names, every position when that is ``None``, and
+        two conditions on one column must cover disjoint positions. The answer
+        still covers every entry of ``query_times``: a position no condition
+        covers carries the unconditioned forecast, which is exact because the
+        deployment draws each position independently. The deployment's
+        advertised capability is checked first, so a deployment that cannot
+        condition is refused here rather than after a round trip.
 
         ``query_rows`` carries the observed values at ``query_times`` that
         ``return_mode='log_prob'`` scores, in the same shape as ``history``.
@@ -417,12 +423,12 @@ class JointFMClient:
         requested_columns: Sequence[str | int] | None = None,
         model_version: str | None = None,
         seed: int | None = None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
     ) -> MeanForecastResult:
         """Forecast mean values through the shared forecast validation path.
 
-        With ``condition`` the mean is the conditional mean at the one future
-        position the block names; see :meth:`forecast`.
+        With ``condition`` the mean at each covered position is the conditional
+        mean there; see :meth:`forecast`.
         """
         return cast(
             MeanForecastResult,
@@ -454,12 +460,12 @@ class JointFMClient:
         model_version: str | None = None,
         n_samples: int | None = None,
         seed: int | None = None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
     ) -> SampleForecastResult:
         """Forecast sample paths through the shared forecast validation path.
 
-        With ``condition`` the draws come from the conditional at the one future
-        position the block names; see :meth:`forecast`.
+        With ``condition`` the draws at each covered position come from the
+        conditional there; see :meth:`forecast`.
         """
         return cast(
             SampleForecastResult,
@@ -493,12 +499,12 @@ class JointFMClient:
         n_samples: int | None = None,
         quantiles: Sequence[float | int] | None = None,
         seed: int | None = None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
     ) -> QuantileForecastResult:
         """Forecast quantiles through the shared forecast validation path.
 
-        With ``condition`` the quantiles describe the conditional at the one
-        future position the block names; see :meth:`forecast`.
+        With ``condition`` the quantiles at each covered position describe the
+        conditional there; see :meth:`forecast`.
         """
         return cast(
             QuantileForecastResult,
@@ -532,7 +538,7 @@ class JointFMClient:
         requested_columns: Sequence[str | int] | None = None,
         model_version: str | None = None,
         seed: int | None = None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
     ) -> LogProbResult:
         """Score observed future values through the shared forecast validation path.
 
@@ -544,9 +550,9 @@ class JointFMClient:
         declared column in declared order, which is what omitting it already
         resolves to.
 
-        With ``condition`` the score is taken under the conditional at the one
-        future position the block names, and the service refuses rows that
-        contradict the condition instead of scoring them; see :meth:`forecast`.
+        With ``condition`` each covered row is scored under the conditional at
+        its position, and the service refuses a row that contradicts a
+        condition covering it instead of scoring it; see :meth:`forecast`.
         """
         return cast(
             LogProbResult,
@@ -721,7 +727,7 @@ class JointFMClient:
         use_local_normalized_time: bool,
         calendar_id: str,
         timezone: str | None,
-        condition: ConditionBlock | None = None,
+        condition: Condition | Sequence[Condition] | None = None,
         query_rows: Any | None = None,
     ) -> dict[str, Any]:
         if schema is None:
