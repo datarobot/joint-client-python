@@ -10,6 +10,13 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.9.0 (2026-09-24)
+
+### Feat
+
+- Let each condition name its own positions and move the envelope to schema v5 (#18)
+- Add the log_prob return mode and move the envelope to schema v4 (#17)
+
 ## v0.8.0 (2026-09-22)
 
 ### Feat
