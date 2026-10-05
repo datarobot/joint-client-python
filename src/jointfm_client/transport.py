@@ -23,6 +23,7 @@ from email.utils import parsedate_to_datetime
 import math
 from typing import Any, Final, Protocol
 
+import orjson
 import requests
 from tenacity import RetryCallState, Retrying, stop_after_attempt
 from tenacity.wait import wait_base, wait_random_exponential
@@ -353,34 +354,58 @@ def _decode_json_object(
     response_body_excerpt_characters: int,
     datarobot_request_id_headers: Sequence[str],
 ) -> Mapping[str, Any]:
-    body_excerpt = _response_body_excerpt(response, response_body_excerpt_characters)
-    datarobot_request_id = _datarobot_request_id(response, datarobot_request_id_headers)
-    if body_excerpt == "":
-        raise JointFMResponseDecodeError(
+    """Decode one successful response body into a JSON object with orjson.
+
+    The body is parsed straight from its bytes. The text excerpt that errors
+    carry is built only when an error is raised: a large sample response would
+    otherwise be decoded to text and copied just to keep its first characters.
+    """
+    body = response.content
+    if body.isspace() or not body:
+        raise _decode_error(
             "JointFM service returned an empty response body",
-            status_code=_response_status_code(response),
-            response_body_excerpt=body_excerpt,
-            datarobot_request_id=datarobot_request_id,
+            response,
+            response_body_excerpt_characters=response_body_excerpt_characters,
+            datarobot_request_id_headers=datarobot_request_id_headers,
         )
 
     try:
-        response_payload = response.json()
-    except ValueError as error:
-        raise JointFMResponseDecodeError(
+        response_payload = orjson.loads(body)
+    except orjson.JSONDecodeError as error:
+        raise _decode_error(
             "JointFM service returned a non-JSON response body",
-            status_code=_response_status_code(response),
-            response_body_excerpt=body_excerpt,
-            datarobot_request_id=datarobot_request_id,
+            response,
+            response_body_excerpt_characters=response_body_excerpt_characters,
+            datarobot_request_id_headers=datarobot_request_id_headers,
         ) from error
 
     if not isinstance(response_payload, Mapping):
-        raise JointFMResponseDecodeError(
+        raise _decode_error(
             "JointFM service returned a JSON response that is not an object",
-            status_code=_response_status_code(response),
-            response_body_excerpt=body_excerpt,
-            datarobot_request_id=datarobot_request_id,
+            response,
+            response_body_excerpt_characters=response_body_excerpt_characters,
+            datarobot_request_id_headers=datarobot_request_id_headers,
         )
     return response_payload
+
+
+def _decode_error(
+    message: str,
+    response: requests.Response,
+    *,
+    response_body_excerpt_characters: int,
+    datarobot_request_id_headers: Sequence[str],
+) -> JointFMResponseDecodeError:
+    return JointFMResponseDecodeError(
+        message,
+        status_code=_response_status_code(response),
+        response_body_excerpt=_response_body_excerpt(
+            response, response_body_excerpt_characters
+        ),
+        datarobot_request_id=_datarobot_request_id(
+            response, datarobot_request_id_headers
+        ),
+    )
 
 
 def _best_effort_decode_json_object(response: requests.Response) -> Mapping[str, Any]:
@@ -392,8 +417,8 @@ def _best_effort_decode_json_object(response: requests.Response) -> Mapping[str,
     to be a JSON object.
     """
     try:
-        payload = response.json()
-    except ValueError:
+        payload = orjson.loads(response.content)
+    except orjson.JSONDecodeError:
         return {}
     if not isinstance(payload, Mapping):
         return {}

@@ -23,6 +23,8 @@ import importlib.metadata
 import math
 from typing import Any, Final, Literal, Self, TypeAlias, TypeVar, cast
 
+import numpy as np
+
 from jointfm_client.exceptions import (
     JointFMServiceError,
     UnsupportedModelVersionError,
@@ -160,9 +162,16 @@ class ColumnSpec:
     time_value_use_local_normalized_time: bool = False
     time_value_calendar_id: str = DEFAULT_CALENDAR_ID
     time_value_timezone: str | None = None
+    traits: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
-        """Validate column metadata against the service contract."""
+        """Validate column metadata against the service contract.
+
+        ``traits`` are expert hints, ``{trait_name: value}``. Only their shape
+        is checked here; the deployment owns the trait vocabulary and refuses
+        unknown names, values outside a trait's value space, and traits that do
+        not apply to the column's modality.
+        """
         _require_string(self.name, field="columns.name")
         _require_member(
             self.modality,
@@ -206,6 +215,12 @@ class ColumnSpec:
         )
         _optional_string(self.time_value_timezone, field="columns.time_value_timezone")
         _validate_time_value_options(self)
+        if self.traits is not None:
+            for trait_name, trait_value in _require_mapping(
+                self.traits, field="columns.traits"
+            ).items():
+                _require_string(trait_name, field="columns.traits name")
+                _require_string(trait_value, field=f"columns.traits.{trait_name}")
 
     def to_payload(self) -> dict[str, Any]:
         """Return this column descriptor as a JSON-compatible dictionary."""
@@ -246,6 +261,8 @@ class ColumnSpec:
             payload["time_value_calendar_id"] = self.time_value_calendar_id
         if self.time_value_timezone is not None:
             payload["time_value_timezone"] = self.time_value_timezone
+        if self.traits is not None:
+            payload["traits"] = dict(self.traits)
         return payload
 
 
@@ -818,10 +835,16 @@ class HealthMetadata:
     time_index_encoding: str
     max_sample_count: int
     data_generation: DataGenerationCapabilities | None = None
+    supported_metadata_traits: tuple[str, ...] = ()
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> Self:
-        """Parse and validate a JSON health payload from the service."""
+        """Parse and validate a JSON health payload from the service.
+
+        ``supported_metadata_traits`` lists the expert-hint traits the mounted
+        model reads. A deployment that does not send the field predates hints
+        and drops them unread, so it parses as supporting none.
+        """
         validate_service_metadata(payload)
         raw_data_generation = payload.get("data_generation")
         if raw_data_generation is None:
@@ -885,6 +908,15 @@ class HealthMetadata:
                 field="max_sample_count",
             ),
             data_generation=parsed_data_generation,
+            supported_metadata_traits=(
+                ()
+                if payload.get("supported_metadata_traits") is None
+                else _string_tuple(
+                    payload.get("supported_metadata_traits"),
+                    field="supported_metadata_traits",
+                    allow_empty=True,
+                )
+            ),
         )
 
 
@@ -1039,20 +1071,22 @@ class ForecastDiagnostics:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class QuantileForecast:
-    """One quantile surface aligned to the response horizon and requested columns."""
+    """One quantile surface aligned to the response horizon and requested columns.
+
+    ``values`` is a read-only float64 array with axis order ``(horizon, column)``.
+    """
 
     quantile: float
-    values: tuple[tuple[float, ...], ...]
+    values: np.ndarray
 
-    def to_numpy(self) -> Any:
-        """Return NumPy values with axis order ``(horizon, column)``."""
-        numpy_module = _require_numpy_module()
-        return numpy_module.asarray(self.values, dtype=float)
+    def to_numpy(self) -> np.ndarray:
+        """Return the read-only values with axis order ``(horizon, column)``."""
+        return self.values
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class LogProbScores:
     """Per-horizon log densities of one scored request, with its summaries.
 
@@ -1064,10 +1098,11 @@ class LogProbScores:
 
     A log density is joint over the columns that were scored, so the block has
     no column axis however wide the request was: one number per horizon.
+    ``values`` and ``nll_values`` are read-only float64 arrays of that length.
     """
 
-    values: tuple[float, ...]
-    nll_values: tuple[float, ...]
+    values: np.ndarray
+    nll_values: np.ndarray
     total: float
     mean: float
     nll_total: float
@@ -1081,23 +1116,25 @@ class LogProbScores:
         expected_horizon_count: int | None = None,
     ) -> Self:
         """Parse one ``outputs.log_prob`` block and check its derived fields."""
-        values = _require_float_vector(
+        values = _require_float_array(
             payload.get("values"),
             field="outputs.log_prob.values",
-            expected_length=expected_horizon_count,
+            expected_shape=(expected_horizon_count,),
         )
-        nll_values = _require_float_vector(
+        nll_values = _require_float_array(
             payload.get("nll_values"),
             field="outputs.log_prob.nll_values",
-            expected_length=len(values),
+            expected_shape=(len(values),),
         )
-        for index, (score, negated) in enumerate(zip(values, nll_values, strict=True)):
+        for index, (score, negated) in enumerate(
+            zip(values.tolist(), nll_values.tolist(), strict=True)
+        ):
             _require_derived_score(
                 negated,
                 expected=-score,
                 field=f"outputs.log_prob.nll_values[{index}]",
             )
-        summed = math.fsum(values)
+        summed = math.fsum(values.tolist())
         total = _require_derived_score(
             _require_output_float(payload.get("total"), field="outputs.log_prob.total"),
             expected=summed,
@@ -1132,14 +1169,14 @@ class LogProbScores:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class ForecastOutputs:
     """Legacy-shaped forecast output arrays for one parsed forecast result."""
 
     query_times: tuple[Any, ...]
     requested_columns: tuple[str, ...]
-    mean: tuple[tuple[float, ...], ...] | None = None
-    samples: tuple[tuple[tuple[float, ...], ...], ...] | None = None
+    mean: np.ndarray | None = None
+    samples: np.ndarray | None = None
     quantiles: tuple[QuantileForecast, ...] | None = None
     log_prob: LogProbScores | None = None
 
@@ -1153,8 +1190,14 @@ class ForecastOutputs:
         expected_requested_column_count: int | None = None,
         expected_sample_count: int | None = None,
         expected_quantiles: Sequence[float] | None = None,
+        nullable_columns: frozenset[str] = frozenset(),
     ) -> Self:
-        """Parse and validate the `outputs` block from one forecast response."""
+        """Parse and validate the `outputs` block from one forecast response.
+
+        ``nullable_columns`` names the columns the request declared nullable:
+        in those columns a ``null`` value is the observed missing state and
+        parses to NaN; everywhere else ``null`` is refused.
+        """
         query_times = tuple(
             _require_sequence(payload.get("query_times"), field="outputs.query_times")
         )
@@ -1175,28 +1218,28 @@ class ForecastOutputs:
 
         horizon_count = len(query_times)
         column_count = len(requested_columns)
-        mean: tuple[tuple[float, ...], ...] | None = None
-        samples: tuple[tuple[tuple[float, ...], ...], ...] | None = None
+        missing_allowed = tuple(name in nullable_columns for name in requested_columns)
+        mean: np.ndarray | None = None
+        samples: np.ndarray | None = None
         quantiles: tuple[QuantileForecast, ...] | None = None
         log_prob: LogProbScores | None = None
 
         if return_mode == "mean":
-            mean = _require_float_matrix(
+            mean = _require_float_array(
                 payload.get("mean"),
                 field="outputs.mean",
-                expected_outer_length=horizon_count,
-                expected_inner_length=column_count,
+                expected_shape=(horizon_count, column_count),
+                missing_allowed=missing_allowed,
             )
             _require_none(payload.get("samples"), field="outputs.samples")
             _require_none(payload.get("quantiles"), field="outputs.quantiles")
             _require_none(payload.get("log_prob"), field="outputs.log_prob")
         elif return_mode == "samples":
-            samples = _require_float_tensor3(
+            samples = _require_float_array(
                 payload.get("samples"),
                 field="outputs.samples",
-                expected_outer_length=expected_sample_count,
-                expected_middle_length=horizon_count,
-                expected_inner_length=column_count,
+                expected_shape=(expected_sample_count, horizon_count, column_count),
+                missing_allowed=missing_allowed,
             )
             _require_none(payload.get("mean"), field="outputs.mean")
             _require_none(payload.get("quantiles"), field="outputs.quantiles")
@@ -1208,6 +1251,7 @@ class ForecastOutputs:
                 expected_quantiles=expected_quantiles,
                 expected_horizon_count=horizon_count,
                 expected_column_count=column_count,
+                missing_allowed=missing_allowed,
             )
             _require_none(payload.get("mean"), field="outputs.mean")
             _require_none(payload.get("samples"), field="outputs.samples")
@@ -1237,9 +1281,14 @@ class ForecastOutputs:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class ForecastResponse:
-    """Shared metadata preserved on every parsed forecast result."""
+    """Shared metadata preserved on every parsed forecast result.
+
+    Results compare by identity: their values are NumPy arrays, which define
+    no single truth value for ``==``. Compare the arrays themselves, for
+    example with ``numpy.array_equal``.
+    """
 
     schema_version: str
     image_version: str
@@ -1259,8 +1308,8 @@ class ForecastResponse:
         """Return the legacy outputs view for compatibility with nested accessors."""
         raise NotImplementedError
 
-    def to_numpy(self) -> Any:
-        """Return a NumPy view of the parsed forecast values."""
+    def to_numpy(self) -> np.ndarray:
+        """Return the parsed forecast values as a NumPy array."""
         raise NotImplementedError
 
     def to_pandas_tidy(self) -> Any:
@@ -1352,6 +1401,7 @@ class ForecastResponse:
             expected_requested_column_count=expectations.requested_column_count,
             expected_sample_count=expectations.n_samples,
             expected_quantiles=expectations.quantiles,
+            nullable_columns=expectations.nullable_columns,
         )
         diagnostics = ForecastDiagnostics.from_payload(
             _require_mapping(payload.get("diagnostics"), field="diagnostics")
@@ -1424,11 +1474,14 @@ class ForecastResponse:
         return LogProbResult(log_prob=outputs.log_prob, **shared_fields)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class MeanForecastResult(ForecastResponse):
-    """Parsed mean forecast values with shared metadata and conversion helpers."""
+    """Parsed mean forecast values with shared metadata and conversion helpers.
 
-    mean: tuple[tuple[float, ...], ...]
+    ``mean`` is a read-only float64 array with axis order ``(horizon, column)``.
+    """
+
+    mean: np.ndarray
 
     @property
     def outputs(self) -> ForecastOutputs:
@@ -1439,56 +1492,36 @@ class MeanForecastResult(ForecastResponse):
             mean=self.mean,
         )
 
-    def to_numpy(self) -> Any:
-        """Return NumPy values with axis order ``(horizon, column)``."""
-        numpy_module = _require_numpy_module()
-        return numpy_module.asarray(self.mean, dtype=float)
+    def to_numpy(self) -> np.ndarray:
+        """Return the read-only values with axis order ``(horizon, column)``."""
+        return self.mean
 
     def to_pandas_tidy(self) -> Any:
         """Return a tidy DataFrame with ``query_time``, ``requested_column``, and ``value``."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {
-                "query_time": query_time,
-                "requested_column": column_name,
-                "value": value,
-            }
-            for query_time, values_by_column in zip(
-                self.query_times, self.mean, strict=True
-            )
-            for column_name, value in zip(
-                self.requested_columns,
-                values_by_column,
-                strict=True,
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _tidy_frame(
+            self.mean[np.newaxis],
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+        )
 
     def to_pandas_wide(self) -> Any:
         """Return a wide DataFrame with one row per forecast horizon."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {"query_time": query_time}
-            | {
-                column_name: value
-                for column_name, value in zip(
-                    self.requested_columns,
-                    values_by_column,
-                    strict=True,
-                )
-            }
-            for query_time, values_by_column in zip(
-                self.query_times, self.mean, strict=True
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _wide_frame(
+            self.mean[np.newaxis],
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+        )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class SampleForecastResult(ForecastResponse):
-    """Parsed sampled forecast trajectories with shared metadata and conversions."""
+    """Parsed sampled forecast trajectories with shared metadata and conversions.
 
-    samples: tuple[tuple[tuple[float, ...], ...], ...]
+    ``samples`` is a read-only float64 array with axis order
+    ``(sample, horizon, column)``.
+    """
+
+    samples: np.ndarray
 
     @property
     def outputs(self) -> ForecastOutputs:
@@ -1499,55 +1532,32 @@ class SampleForecastResult(ForecastResponse):
             samples=self.samples,
         )
 
-    def to_numpy(self) -> Any:
-        """Return NumPy values with axis order ``(sample, horizon, column)``."""
-        numpy_module = _require_numpy_module()
-        return numpy_module.asarray(self.samples, dtype=float)
+    def to_numpy(self) -> np.ndarray:
+        """Return the read-only values with axis order ``(sample, horizon, column)``."""
+        return self.samples
 
     def to_pandas_tidy(self) -> Any:
         """Return a tidy DataFrame with ``sample``, ``query_time``, and one value per column."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {
-                "sample": sample_index,
-                "query_time": query_time,
-                "requested_column": column_name,
-                "value": value,
-            }
-            for sample_index, sample_values in enumerate(self.samples)
-            for query_time, values_by_column in zip(
-                self.query_times, sample_values, strict=True
-            )
-            for column_name, value in zip(
-                self.requested_columns,
-                values_by_column,
-                strict=True,
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _tidy_frame(
+            self.samples,
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+            leading_name="sample",
+            leading_labels=range(self.samples.shape[0]),
+        )
 
     def to_pandas_wide(self) -> Any:
         """Return a wide DataFrame with one row per sample and forecast horizon."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {"sample": sample_index, "query_time": query_time}
-            | {
-                column_name: value
-                for column_name, value in zip(
-                    self.requested_columns,
-                    values_by_column,
-                    strict=True,
-                )
-            }
-            for sample_index, sample_values in enumerate(self.samples)
-            for query_time, values_by_column in zip(
-                self.query_times, sample_values, strict=True
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _wide_frame(
+            self.samples,
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+            leading_name="sample",
+            leading_labels=range(self.samples.shape[0]),
+        )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class QuantileForecastResult(ForecastResponse):
     """Parsed quantile forecast surfaces with shared metadata and conversions."""
 
@@ -1567,62 +1577,32 @@ class QuantileForecastResult(ForecastResponse):
         """Return the ordered quantile levels preserved from the service payload."""
         return tuple(entry.quantile for entry in self.quantiles)
 
-    def to_numpy(self) -> Any:
-        """Return NumPy values with axis order ``(quantile, horizon, column)``."""
-        numpy_module = _require_numpy_module()
-        return numpy_module.asarray(
-            [entry.values for entry in self.quantiles],
-            dtype=float,
-        )
+    def to_numpy(self) -> np.ndarray:
+        """Return a new array with axis order ``(quantile, horizon, column)``."""
+        return np.stack([entry.values for entry in self.quantiles])
 
     def to_pandas_tidy(self) -> Any:
         """Return a tidy DataFrame with ``quantile``, ``query_time``, and one value per column."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {
-                "quantile": quantile_entry.quantile,
-                "query_time": query_time,
-                "requested_column": column_name,
-                "value": value,
-            }
-            for quantile_entry in self.quantiles
-            for query_time, values_by_column in zip(
-                self.query_times,
-                quantile_entry.values,
-                strict=True,
-            )
-            for column_name, value in zip(
-                self.requested_columns,
-                values_by_column,
-                strict=True,
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _tidy_frame(
+            self.to_numpy(),
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+            leading_name="quantile",
+            leading_labels=self.quantile_levels,
+        )
 
     def to_pandas_wide(self) -> Any:
         """Return a wide DataFrame with one row per quantile and forecast horizon."""
-        pandas_module = _require_pandas_module()
-        rows = [
-            {"quantile": quantile_entry.quantile, "query_time": query_time}
-            | {
-                column_name: value
-                for column_name, value in zip(
-                    self.requested_columns,
-                    values_by_column,
-                    strict=True,
-                )
-            }
-            for quantile_entry in self.quantiles
-            for query_time, values_by_column in zip(
-                self.query_times,
-                quantile_entry.values,
-                strict=True,
-            )
-        ]
-        return pandas_module.DataFrame.from_records(rows)
+        return _wide_frame(
+            self.to_numpy(),
+            query_times=self.query_times,
+            requested_columns=self.requested_columns,
+            leading_name="quantile",
+            leading_labels=self.quantile_levels,
+        )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class LogProbResult(ForecastResponse):
     """Parsed log densities of observed values, with shared metadata.
 
@@ -1643,10 +1623,9 @@ class LogProbResult(ForecastResponse):
             log_prob=self.log_prob,
         )
 
-    def to_numpy(self) -> Any:
-        """Return NumPy log densities with axis order ``(horizon,)``."""
-        numpy_module = _require_numpy_module()
-        return numpy_module.asarray(self.log_prob.values, dtype=float)
+    def to_numpy(self) -> np.ndarray:
+        """Return the read-only log densities with axis order ``(horizon,)``."""
+        return self.log_prob.values
 
     def to_pandas_tidy(self) -> Any:
         """Return a tidy DataFrame with ``query_time``, ``log_prob``, and ``nll``."""
@@ -1716,6 +1695,31 @@ def build_forecast_payload(
         condition=condition,
         query_rows=query_rows,
     ).to_payload()
+
+
+def require_metadata_trait_support(
+    metadata: HealthMetadata,
+    columns: Sequence[Mapping[str, Any]],
+) -> None:
+    """Refuse expert hints the mounted deployment does not read.
+
+    ``columns`` are request column descriptors as sent on the wire. A hint
+    for a trait outside ``metadata.supported_metadata_traits`` would reach no
+    model input, so the request is refused before it is sent.
+
+    Raises:
+        UnsupportedServiceContractError: when a column carries a trait the
+            deployment does not advertise.
+    """
+    supported = set(metadata.supported_metadata_traits)
+    for column in columns:
+        unsupported = sorted(set(column.get("traits") or {}) - supported)
+        if unsupported:
+            raise UnsupportedServiceContractError(
+                f"The mounted {metadata.head!r} deployment does not read metadata "
+                f"traits {unsupported} on column {column.get('name')!r}; it "
+                f"advertises {list(metadata.supported_metadata_traits)}"
+            )
 
 
 def require_condition_support(
@@ -2103,6 +2107,7 @@ class _ForecastResponseExpectations:
     requested_column_count: int | None = None
     n_samples: int | None = None
     quantiles: tuple[float, ...] | None = None
+    nullable_columns: frozenset[str] = frozenset()
 
 
 def _forecast_response_expectations(
@@ -2170,11 +2175,31 @@ def _forecast_response_expectations(
         quantiles=None
         if quantiles_value is None
         else tuple(_require_quantiles(quantiles_value)),
+        nullable_columns=_nullable_column_names(request_payload),
     )
 
 
+def _nullable_column_names(request_payload: Mapping[str, Any]) -> frozenset[str]:
+    """Return the names of the columns the request declares nullable."""
+    columns_value = request_payload.get("columns")
+    if columns_value is None:
+        return frozenset()
+    names: set[str] = set()
+    for index, column in enumerate(
+        _require_sequence(columns_value, field="request_payload.columns")
+    ):
+        mapping = _require_mapping(column, field=f"request_payload.columns[{index}]")
+        if mapping.get("nullable") is True:
+            names.add(
+                _require_string(
+                    mapping.get("name"), field=f"request_payload.columns[{index}].name"
+                )
+            )
+    return frozenset(names)
+
+
 def _validate_sample_bounds(
-    samples: tuple[tuple[tuple[float, ...], ...], ...],
+    samples: np.ndarray,
     requested_columns: Sequence[str],
     request_payload: Mapping[str, Any] | None,
 ) -> None:
@@ -2190,23 +2215,45 @@ def _validate_sample_bounds(
         if bounds is None:
             continue
         lower_bound, upper_bound = bounds
-        for sample_index, sample_values in enumerate(samples):
-            for horizon_index, horizon_values in enumerate(sample_values):
-                value = horizon_values[requested_column_index]
-                field = (
-                    f"outputs.samples[{sample_index}][{horizon_index}]"
-                    f"[{requested_column_index}]"
-                )
-                if lower_bound is not None and value < lower_bound:
-                    raise ValueError(
-                        f"{field} violates requested lower_bound for column "
-                        f"{requested_column!r}: {value} < {lower_bound}"
-                    )
-                if upper_bound is not None and value > upper_bound:
-                    raise ValueError(
-                        f"{field} violates requested upper_bound for column "
-                        f"{requested_column!r}: {value} > {upper_bound}"
-                    )
+        column_values = samples[:, :, requested_column_index]
+        if lower_bound is not None:
+            _raise_for_first_bound_violation(
+                column_values < lower_bound,
+                column_values,
+                requested_column_index=requested_column_index,
+                description=f"lower_bound for column {requested_column!r}",
+                comparison="<",
+                bound=lower_bound,
+            )
+        if upper_bound is not None:
+            _raise_for_first_bound_violation(
+                column_values > upper_bound,
+                column_values,
+                requested_column_index=requested_column_index,
+                description=f"upper_bound for column {requested_column!r}",
+                comparison=">",
+                bound=upper_bound,
+            )
+
+
+def _raise_for_first_bound_violation(
+    violations: np.ndarray,
+    column_values: np.ndarray,
+    *,
+    requested_column_index: int,
+    description: str,
+    comparison: str,
+    bound: float,
+) -> None:
+    """Raise for the first ``(sample, horizon)`` cell flagged in ``violations``."""
+    if not violations.any():
+        return
+    sample_index, horizon_index = (int(index) for index in np.argwhere(violations)[0])
+    value = float(column_values[sample_index, horizon_index])
+    raise ValueError(
+        f"outputs.samples[{sample_index}][{horizon_index}][{requested_column_index}] "
+        f"violates requested {description}: {value} {comparison} {bound}"
+    )
 
 
 def _sample_bounds_by_column_name(
@@ -2292,24 +2339,6 @@ def _require_output_float(value: Any, *, field: str) -> float:
     return parsed
 
 
-def _require_float_vector(
-    value: Any,
-    *,
-    field: str,
-    expected_length: int | None = None,
-) -> tuple[float, ...]:
-    values = _require_sequence(value, field=field)
-    _validate_length(
-        actual_length=len(values),
-        expected_length=expected_length,
-        field=field,
-    )
-    return tuple(
-        _require_output_float(item, field=f"{field}[{index}]")
-        for index, item in enumerate(values)
-    )
-
-
 def _require_derived_score(value: float, *, expected: float, field: str) -> float:
     if not math.isclose(
         value,
@@ -2324,64 +2353,81 @@ def _require_derived_score(value: float, *, expected: float, field: str) -> floa
     return value
 
 
-def _require_float_matrix(
+# NumPy dtype kinds a decoded JSON number array may infer: signed and unsigned
+# integers and floats. Anything else (strings, None, nested objects) is refused.
+_NUMERIC_ARRAY_KINDS: Final = frozenset({"i", "u", "f"})
+
+
+def _require_float_array(
     value: Any,
     *,
     field: str,
-    expected_outer_length: int | None = None,
-    expected_inner_length: int | None = None,
-) -> tuple[tuple[float, ...], ...]:
-    rows = _require_sequence(value, field=field)
-    _validate_length(
-        actual_length=len(rows),
-        expected_length=expected_outer_length,
-        field=field,
-    )
-    parsed_rows: list[tuple[float, ...]] = []
-    for row_index, row in enumerate(rows):
-        row_values = _require_sequence(row, field=f"{field}[{row_index}]")
-        _validate_length(
-            actual_length=len(row_values),
-            expected_length=expected_inner_length,
-            field=f"{field}[{row_index}]",
+    expected_shape: tuple[int | None, ...],
+    missing_allowed: tuple[bool, ...] = (),
+) -> np.ndarray:
+    """Parse one nested JSON array of finite numbers into a read-only float64 array.
+
+    ``expected_shape`` fixes the number of axes, and each entry that is not
+    ``None`` fixes that axis's length. NumPy first infers the element type
+    from the decoded values, so strings, nulls, and ragged nesting are refused
+    rather than coerced; a boolean mixed into numbers is indistinguishable
+    from ``0`` or ``1`` at that point and is read as one. Every value must be
+    finite.
+
+    ``missing_allowed`` holds one flag per entry of the last axis (the
+    requested columns). Where it is true, ``null`` is the observed missing
+    state of a nullable column and becomes NaN. An array holding a ``null`` is
+    converted element by element, so in that case a numeric string would be
+    read as its number; the server never sends one. Raises ``ValueError``
+    naming ``field`` and, for a bad value, its index.
+    """
+    try:
+        raw = np.asarray(value)
+    except ValueError as error:
+        raise ValueError(
+            f"{field} must be a rectangular array of numbers: {error}"
+        ) from error
+    if raw.dtype.kind == "O" and any(missing_allowed):
+        raw = _nulls_as_nan(raw, field=field)
+    if raw.dtype.kind not in _NUMERIC_ARRAY_KINDS:
+        raise ValueError(f"{field} must contain only numbers; got {raw.dtype} values")
+    if raw.ndim != len(expected_shape):
+        raise ValueError(
+            f"{field} must have {len(expected_shape)} axes; got shape {raw.shape}"
         )
-        parsed_rows.append(
-            tuple(
-                _require_output_float(
-                    item,
-                    field=f"{field}[{row_index}][{column_index}]",
-                )
-                for column_index, item in enumerate(row_values)
+    for axis, (actual, expected) in enumerate(
+        zip(raw.shape, expected_shape, strict=True)
+    ):
+        if expected is not None and actual != expected:
+            raise ValueError(
+                f"{field} length mismatch on axis {axis}: "
+                f"expected {expected}, got {actual}"
             )
+    # A decoded JSON list yields a fresh array that is already float64, so no
+    # copy is needed; a caller's own array is copied so that marking the result
+    # read-only never freezes the caller's buffer.
+    array = raw.astype(np.float64, copy=raw is value)
+    refused = ~np.isfinite(array)
+    if any(missing_allowed):
+        refused &= ~(np.isnan(array) & np.asarray(missing_allowed, dtype=bool))
+    if refused.any():
+        index = "".join(f"[{int(i)}]" for i in np.argwhere(refused)[0])
+        raise ValueError(
+            f"{field}{index} must be finite; null is allowed only in columns the "
+            "request declares nullable"
         )
-    return tuple(parsed_rows)
+    array.flags.writeable = False
+    return array
 
 
-def _require_float_tensor3(
-    value: Any,
-    *,
-    field: str,
-    expected_outer_length: int | None = None,
-    expected_middle_length: int | None = None,
-    expected_inner_length: int | None = None,
-) -> tuple[tuple[tuple[float, ...], ...], ...]:
-    items = _require_sequence(value, field=field)
-    _validate_length(
-        actual_length=len(items),
-        expected_length=expected_outer_length,
-        field=field,
-    )
-    parsed_items: list[tuple[tuple[float, ...], ...]] = []
-    for item_index, item in enumerate(items):
-        parsed_items.append(
-            _require_float_matrix(
-                item,
-                field=f"{field}[{item_index}]",
-                expected_outer_length=expected_middle_length,
-                expected_inner_length=expected_inner_length,
-            )
-        )
-    return tuple(parsed_items)
+def _nulls_as_nan(raw: np.ndarray, *, field: str) -> np.ndarray:
+    """Return an object array of numbers and ``None`` as float64 with NaN for ``None``."""
+    # On an object array ``==`` compares element by element.
+    missing = raw == None  # noqa: E711
+    try:
+        return np.where(missing, np.nan, raw).astype(np.float64)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field} must contain only numbers and nulls") from error
 
 
 def _require_quantile_forecasts(
@@ -2391,6 +2437,7 @@ def _require_quantile_forecasts(
     expected_quantiles: Sequence[float] | None = None,
     expected_horizon_count: int | None = None,
     expected_column_count: int | None = None,
+    missing_allowed: tuple[bool, ...] = (),
 ) -> tuple[QuantileForecast, ...]:
     quantile_entries = _require_sequence(value, field=field)
     _validate_length(
@@ -2412,11 +2459,11 @@ def _require_quantile_forecasts(
         parsed_quantiles.append(
             QuantileForecast(
                 quantile=quantile,
-                values=_require_float_matrix(
+                values=_require_float_array(
                     mapping.get("values"),
                     field=f"{field}[{quantile_index}].values",
-                    expected_outer_length=expected_horizon_count,
-                    expected_inner_length=expected_column_count,
+                    expected_shape=(expected_horizon_count, expected_column_count),
+                    missing_allowed=missing_allowed,
                 ),
             )
         )
@@ -2441,14 +2488,82 @@ def _require_pandas_module() -> Any:
     return pandas_module
 
 
-def _require_numpy_module() -> Any:
-    try:
-        import numpy as numpy_module
-    except ImportError as error:  # pragma: no cover - exercised only without extra
-        raise RuntimeError(
-            "NumPy result conversion requires installing jointfm-client[notebooks]"
-        ) from error
-    return numpy_module
+def _tidy_frame(
+    values: np.ndarray,
+    *,
+    query_times: Sequence[Any],
+    requested_columns: Sequence[str],
+    leading_name: str | None = None,
+    leading_labels: Sequence[Any] = (),
+) -> Any:
+    """Return one row per ``(leading, query_time, requested_column)`` cell.
+
+    ``values`` has axis order ``(leading, horizon, column)``. Without a
+    ``leading_name`` the leading axis must have length one and no leading
+    column is emitted, which is the mean forecast's shape. Label columns take
+    pandas' own type inference over the labels, as rows built from Python
+    values do.
+    """
+    pandas_module = _require_pandas_module()
+    leading_count, horizon_count, column_count = values.shape
+    cells_per_leading = horizon_count * column_count
+    flat_cells = np.arange(leading_count * cells_per_leading)
+    columns: dict[str, Any] = {}
+    if leading_name is not None:
+        columns[leading_name] = _label_column(
+            pandas_module, leading_labels, flat_cells // cells_per_leading
+        )
+    columns["query_time"] = _label_column(
+        pandas_module, query_times, (flat_cells // column_count) % horizon_count
+    )
+    columns["requested_column"] = _label_column(
+        pandas_module, requested_columns, flat_cells % column_count
+    )
+    columns["value"] = values.reshape(-1)
+    return pandas_module.DataFrame(columns)
+
+
+def _wide_frame(
+    values: np.ndarray,
+    *,
+    query_times: Sequence[Any],
+    requested_columns: Sequence[str],
+    leading_name: str | None = None,
+    leading_labels: Sequence[Any] = (),
+) -> Any:
+    """Return one row per ``(leading, query_time)`` with one column per requested column.
+
+    Axis order and the meaning of ``leading_name`` match :func:`_tidy_frame`.
+    Raises ``ValueError`` when a requested column is named like an index
+    column, which would otherwise overwrite it.
+    """
+    pandas_module = _require_pandas_module()
+    leading_count, horizon_count, column_count = values.shape
+    flat_rows = np.arange(leading_count * horizon_count)
+    columns: dict[str, Any] = {}
+    if leading_name is not None:
+        columns[leading_name] = _label_column(
+            pandas_module, leading_labels, flat_rows // horizon_count
+        )
+    columns["query_time"] = _label_column(
+        pandas_module, query_times, flat_rows % horizon_count
+    )
+    clashing = sorted(set(columns) & set(requested_columns))
+    if clashing:
+        raise ValueError(
+            f"requested columns {clashing!r} clash with the wide frame's index columns"
+        )
+    table = values.reshape(leading_count * horizon_count, column_count)
+    for column_index, column_name in enumerate(requested_columns):
+        columns[column_name] = table[:, column_index]
+    return pandas_module.DataFrame(columns)
+
+
+def _label_column(
+    pandas_module: Any, labels: Sequence[Any], positions: np.ndarray
+) -> Any:
+    """Return ``labels`` taken at ``positions``, typed as pandas infers ``labels``."""
+    return pandas_module.Series(list(labels)).take(positions).reset_index(drop=True)
 
 
 def _to_json_compatible(value: Any, *, field: str) -> Any:

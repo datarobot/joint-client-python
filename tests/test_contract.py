@@ -800,7 +800,7 @@ def test_health_and_response_models_parse_current_payloads() -> None:
     assert health.decoding_strategy == "parallel_dense"
     assert isinstance(response, MeanForecastResult)
     assert response.requested_columns == ("target",)
-    assert response.mean == ((100.0,),)
+    np.testing.assert_array_equal(response.mean, ((100.0,),))
     assert response.outputs.requested_columns == ("target",)
     assert response.diagnostics.horizon_count == 1
     assert response.errors == ()

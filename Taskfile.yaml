@@ -52,6 +52,10 @@ tasks:
     desc: Run the unit test suite
     cmd: uv run pytest -n auto
 
+  max-utilization:
+    desc: Send the largest advertised forecast to the configured deployment and print a PASS/FAIL verdict
+    cmd: uv run jointfm-client max-utilization {{.CLI_ARGS}}
+
   coverage:
     desc: Run tests with coverage enforcement
     cmd: uv run pytest -n auto --cov=jointfm_client --cov-report=term-missing --cov-fail-under=90
@@ -202,7 +206,7 @@ tasks:
       PRE_COMMIT_STATUS=$?
       MSG_STATUS=0
       if [ -s .git/COMMIT_EDITMSG ]; then
-        uv run pre-commit run --hook-stage commit-msg --commit-msg-filename .git/COMMIT_EDITMSG
+        uv run cz check --commit-msg-file .git/COMMIT_EDITMSG
         MSG_STATUS=$?
       fi
       if [ "$PRE_COMMIT_STATUS" -ne 0 ] || [ "$MSG_STATUS" -ne 0 ]; then

@@ -24,6 +24,8 @@ import re
 from typing import Any, Self, cast
 from urllib.parse import urlparse
 
+import numpy as np
+
 from jointfm_client.adapters import (
     build_forecast_payload_from_dataframe,
     dataframe_to_history_rows,
@@ -49,6 +51,7 @@ from jointfm_client.contract import (
     TimeValueKind,
     build_forecast_payload,
     require_condition_support,
+    require_metadata_trait_support,
     validate_service_metadata,
 )
 from jointfm_client.exceptions import (
@@ -164,6 +167,16 @@ class JointFMClient:
                 jointfm_config,
             ),
         )
+
+    @property
+    def timeout(self) -> JointFMTimeoutConfig:
+        """Return the connect and read timeouts applied to every request."""
+        return self._timeout
+
+    @property
+    def retry_config(self) -> JointFMRetryConfig:
+        """Return the retry policy of the single-endpoint transport."""
+        return self._retry_config
 
     def health(self, *, cache: bool = False, refresh: bool = False) -> HealthMetadata:
         """Return service metadata from the configured JointFM endpoint.
@@ -396,6 +409,9 @@ class JointFMClient:
                 condition=condition,
                 query_rows=query_rows,
             )
+        hinted_columns = [column for column in payload["columns"] if "traits" in column]
+        if hinted_columns:
+            require_metadata_trait_support(self.health(cache=True), hinted_columns)
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
             return self._forecast_sample_batches(payload, sample_cap)
@@ -1160,12 +1176,11 @@ def _merge_sample_forecast_results(
         raise ValueError("sample batching produced no responses")
 
     first_result = batch_results[0]
-    merged_samples = tuple(
-        sample_values
-        for batch_result in batch_results
-        for sample_values in batch_result.samples
-    )
     _validate_sample_batch_results(batch_results, first_result)
+    merged_samples = np.concatenate(
+        [batch_result.samples for batch_result in batch_results], axis=0
+    )
+    merged_samples.flags.writeable = False
     requested_samples = cast(int, request_payload["n_samples"])
     if len(merged_samples) != requested_samples:
         raise ValueError(

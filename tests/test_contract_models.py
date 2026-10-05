@@ -247,8 +247,8 @@ def test_response_helper_models_parse_direct_payloads() -> None:
     assert diagnostics.history_rows == 2
     assert diagnostics.horizon_count == 1
     assert diagnostics.seed == 7
-    assert mean_outputs.mean == ((12.0,),)
-    assert sample_outputs.samples == (((12.0,),), ((12.5,),))
+    np.testing.assert_array_equal(mean_outputs.mean, ((12.0,),))
+    np.testing.assert_array_equal(sample_outputs.samples, (((12.0,),), ((12.5,),)))
     assert isinstance(quantile_outputs.quantiles, tuple)
     assert isinstance(quantile_outputs.quantiles[0], QuantileForecast)
     np.testing.assert_allclose(
@@ -377,7 +377,7 @@ def test_forecast_response_rejects_sample_bound_violations() -> None:
     result = ForecastResponse.from_payload(
         valid_response, request_payload=request_payload
     )
-    assert result.outputs.samples == (((12.0,),),)
+    np.testing.assert_array_equal(result.outputs.samples, (((12.0,),),))
 
     below_lower_bound = _sample_response_payload()
     below_lower_bound["outputs"]["samples"] = [[[-1.0]]]

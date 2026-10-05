@@ -151,6 +151,14 @@ uv run jointfm-client forecast-csv history.csv forecast.csv \
 
 `forecast-csv` supports `--time-index-mode ordinal|continuous_float|absolute_datetime`, `--time-column`, repeated `--target-column`, repeated `--requested-column`, `--return-mode mean|samples|quantiles`, `--n-samples`, `--quantiles`, and `--seed`. The output is the same tidy shape returned by the Python result helpers.
 
+Check that the deployment serves the largest request its health envelope advertises:
+
+```bash
+uv run jointfm-client max-utilization
+```
+
+`max-utilization` sends a seeded synthetic sample forecast with `max_series` target columns, an `n_input`-row history, an `n_output`-step horizon, and `max_sample_count` samples. With `JOINTFM_DEPLOYMENT_IDS` it also asks for the pool's summed sample capacity, which loads every endpoint at once. It prints the wall-clock time of each stage and a final `VERDICT: PASS` or `VERDICT: FAIL` line. It exits with status 1 on FAIL: when a stage raises a service or transport error, when the pool fails a request over to another endpoint, or when an endpoint fails the health probe. Retries are disabled for this command, so a request that fails under load is reported instead of retried. Each run uses real GPU time on the deployment. `task max-utilization` runs the same command, and `notebooks/max_utilization.ipynb` shows the per-stage timings as a table.
+
 ## Notebook Workflows
 
 Checked-in example notebooks live under `notebooks/`. Every example starts with:
@@ -163,7 +171,7 @@ bootstrap_notebook(add_src_root=True)
 
 Run `task setup` first so VS Code can select the registered `Python (joint-client-python)` notebook kernel backed by this repository's `.venv`.
 
-The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, conditional forecasts (one conditional read as a mean, as draws, as quantiles inside a bounded band, and as the log density of observed values, plus the ranking of candidate conditions), pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
+The bootstrap helper resolves the nearest src-layout Python project root, switches the working directory there, and prepends that project's local `src` tree during development. The examples cover hosted health checks, a maximum-utilization check, low-level JSON prediction, mean forecasts, sample forecasts, quantile forecasts, conditional forecasts (one conditional read as a mean, as draws, as quantiles inside a bounded band, and as the log density of observed values, plus the ranking of candidate conditions), pandas/NumPy result conversion, and CSV forecast workflows. They use `.env.sample` placeholders and checked-in fixture payloads; no real tokens or deployment IDs are stored in notebooks.
 
 The current forecast request contract is:
 
@@ -209,9 +217,9 @@ Whether a deployment can condition depends on the mounted checkpoint's head. `/h
 
 A condition response carries a `plausibility` block: `equality_log_density` is the log density the model assigns to the pinned values and `region_log_probability` the log probability it gives the interval region *given the pinned values at the same position*, so the two add to the plausibility of the whole condition set, each `None` when the request carried no condition of that kind. Over several covered positions each is the sum of the per-position values, exact because positions are independent. They separate a confident answer from one conditioned on something the model finds implausible; the service reports them and never refuses on them. `diagnostics.condition_draws` counts the draws behind sampled outputs, and `diagnostics.interval_estimator` reports the numerical accounting (`points`, `effective_sample_size`) when some position bounds more than one column and its region probability had to be estimated; across several estimated positions it describes the one with the smallest effective sample size.
 
-Column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, and `time_value_timezone`.
+Column descriptors support the server fields `name`, `modality`, `role`, `nullable`, `vocabulary_size`, `level_count`, `mapping`, `lower_bound`, `upper_bound`, `time_value_kind`, `time_value_scale_seconds`, `time_value_use_local_normalized_time`, `time_value_calendar_id`, `time_value_timezone`, and `traits`. `traits` carries expert hints, such as `{"jump_process": "present"}`. The deployment validates them against its trait vocabulary and refuses any field it does not know, and the client sends a hint only to a deployment whose `/healthz` lists the trait in `supported_metadata_traits`.
 
-DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas`:
+Forecast values come back as read-only float64 NumPy arrays (`result.samples`, `result.mean`, each quantile surface's `values`); NumPy is a core dependency. DataFrame helpers and the notebook examples are available through one optional extra that pulls in `pandas`:
 
 ```bash
 uv add "jointfm-client[notebooks]"
@@ -337,6 +345,7 @@ Use `forecast_samples(...)` for sampled trajectories or `forecast_quantiles(...)
 - `task license-check`: verify every Python source file has the required copyright/SPDX header
 - `task typecheck`: run `ty` static type checks
 - `task test`: run unit tests
+- `task max-utilization`: send the largest advertised forecast to the configured deployment and print a PASS/FAIL verdict with wall-clock times
 - `task coverage`: run tests with coverage enforcement above 90%
 - `task build`: build the source distribution and wheel, then validate artifact metadata and contents
 - `task check`: run the static code quality gate (typos, lint, format check, type checks)

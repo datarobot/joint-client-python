@@ -31,6 +31,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any
 
+import numpy as np
 import pytest
 
 from jointfm_client import (
@@ -239,8 +240,8 @@ def test_the_scored_response_parses_into_its_own_result(
     )
 
     assert isinstance(result, LogProbResult)
-    assert result.log_prob.values == (-2.5, -3.25)
-    assert result.log_prob.nll_values == (2.5, 3.25)
+    np.testing.assert_array_equal(result.log_prob.values, (-2.5, -3.25))
+    np.testing.assert_array_equal(result.log_prob.nll_values, (2.5, 3.25))
     assert result.log_prob.total == pytest.approx(-5.75)
     assert result.log_prob.mean == pytest.approx(-2.875)
     assert result.plausibility is None
@@ -312,7 +313,7 @@ def test_the_client_scores_observed_rows_and_types_the_answer(
     )
 
     assert isinstance(result, LogProbResult)
-    assert result.log_prob.values == (-2.5, -3.25)
+    np.testing.assert_array_equal(result.log_prob.values, (-2.5, -3.25))
     sent = transport.payloads[0]
     assert sent["return_mode"] == "log_prob"
     assert sent["query_rows"] == [dict(row) for row in _QUERY_ROWS]
@@ -343,7 +344,7 @@ def test_the_client_scores_under_a_condition(
 
     assert isinstance(result, LogProbResult)
     assert result.query_times == (2, 3)
-    assert result.log_prob.values == (-2.5, -1.75)
+    np.testing.assert_array_equal(result.log_prob.values, (-2.5, -1.75))
     assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
     sent = transport.payloads[0]
     assert sent["query_mode"] == "condition"
