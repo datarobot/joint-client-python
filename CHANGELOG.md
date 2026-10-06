@@ -10,6 +10,12 @@ Releases are cut with `task release`, which uses Commitizen to read
 release tag, infer the next SemVer bump, prepend the new section here,
 commit the bump, and create an annotated tag.
 
+## v0.11.0 (2026-10-06)
+
+### Feat
+
+- Split pool sample forecasts across all endpoints and drop the single-request utilization stage (#20)
+
 ## v0.10.0 (2026-10-06)
 
 ### Feat
