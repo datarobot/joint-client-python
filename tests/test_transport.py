@@ -1420,3 +1420,64 @@ def test_client_pool_forecast_samples_batches_across_peers() -> None:
     )
     assert set(predict_urls) == {primary, backup}
     assert len(predict_urls) == 2
+
+
+@pytest.mark.parametrize(
+    ("n_samples", "expected_sizes", "expected_seeds"),
+    [(3, [2, 1], [7, 8]), (1, [1], [7])],
+)
+def test_client_pool_splits_sample_requests_below_cap_across_all_peers(
+    n_samples: int, expected_sizes: list[int], expected_seeds: list[int]
+) -> None:
+    """A pool splits a sample request evenly over every peer even below the cap."""
+    primary = (
+        "https://app.datarobot.com/api/v2/deployments/"
+        "primary-id/predictionsUnstructured"
+    )
+    backup = (
+        "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+    )
+    settings = _pool_settings(primary, backup)
+    predicts: list[tuple[str, int, int]] = []
+
+    class PoolSampleTransport:
+        """Pool Sample Transport (test helper)."""
+
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            """Get json."""
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            """Post json."""
+            if payload.get("request_type") == "health":
+                return _health_payload()
+            sample_count = cast(int, payload["n_samples"])
+            seed = cast(int, payload["seed"])
+            predicts.append((url, sample_count, seed))
+            response_payload = _forecast_response_payload(return_mode="samples")
+            outputs = cast(dict[str, object], response_payload["outputs"])
+            outputs["samples"] = [[[float(seed)]] for _ in range(sample_count)]
+            diagnostics = cast(dict[str, object], response_payload["diagnostics"])
+            diagnostics["seed"] = seed
+            return response_payload
+
+    client = JointFMClient(settings=settings, transport=PoolSampleTransport())
+    schema = DataFrameSchema(
+        columns=(ColumnSpec(name="target", modality="numeric", role="target"),),
+        time_index_mode="ordinal",
+    )
+    result = client.forecast_samples(
+        [{"target": 10.0}, {"target": 11.0}],
+        schema=schema,
+        query_times=[2],
+        requested_columns=["target"],
+        model_version="jointfm-inference:0.3.0+ckpt.sdk-test",
+        n_samples=n_samples,
+        seed=7,
+    )
+
+    assert len(result.samples) == n_samples
+    assert sorted(size for _, size, _ in predicts) == sorted(expected_sizes)
+    assert sorted(seed for _, _, seed in predicts) == expected_seeds
+    assert len({url for url, _, _ in predicts}) == len(expected_sizes)
+    assert result.diagnostics.seed == 7

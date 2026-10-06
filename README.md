@@ -157,7 +157,7 @@ Check that the deployment serves the largest request its health envelope adverti
 uv run jointfm-client max-utilization
 ```
 
-`max-utilization` sends a seeded synthetic sample forecast with `max_series` target columns, an `n_input`-row history, an `n_output`-step horizon, and `max_sample_count` samples. It then fills every request slot at once: each reachable endpoint (every pool instance with `JOINTFM_DEPLOYMENT_IDS`) receives as many simultaneous maximal requests as its `max_concurrent_requests` admits. It prints the wall-clock time of each stage and a final `VERDICT: PASS` or `VERDICT: FAIL` line. It exits with status 1 on FAIL: when a stage raises a service or transport error, when the pool fails a request over to another endpoint, or when an endpoint fails the health probe. Retries are disabled for this command, so a request that fails under load is reported instead of retried. Each run uses real GPU time on the deployment. `task max-utilization` runs the same command, and `notebooks/max_utilization.ipynb` shows the per-stage timings as a table.
+`max-utilization` fills every request slot at once with a seeded synthetic sample forecast of `max_series` target columns, an `n_input`-row history, an `n_output`-step horizon, and `max_sample_count` samples: each reachable endpoint (every pool instance with `JOINTFM_DEPLOYMENT_IDS`) receives as many simultaneous maximal requests as its `max_concurrent_requests` admits. It prints the burst's wall-clock time and a final `VERDICT: PASS` or `VERDICT: FAIL` line. It exits with status 1 on FAIL: when a request raises a service or transport error or returns the wrong sample count, or when an endpoint fails the health probe. Retries are disabled for this command, so a request that fails under load is reported instead of retried. Each run uses real GPU time on the deployment. `task max-utilization` runs the same command, and `notebooks/max_utilization.ipynb` shows the burst timing as a table.
 
 ## Notebook Workflows
 
@@ -183,7 +183,7 @@ The current forecast request contract is:
 - `time_column`: required for `"absolute_datetime"`, and used for ordered ordinal or continuous histories when supplied
 - `query_times`: non-empty future forecast times only
 - `requested_columns`: optional column names or integer column indices, with duplicates rejected
-- `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`.
+- `n_samples`: positive sample count for sampled forecasts and quantile estimation. When `return_mode="samples"` exceeds the `max_sample_count` advertised by the deployment's health metadata, `forecast_samples(...)` splits the request into capped prediction batches up front and returns one merged `SampleForecastResult`. With `JOINTFM_DEPLOYMENT_IDS`, every sample request is split evenly across all reachable endpoints, whatever its size, and each endpoint serves at most one of its batches at a time. Batch `i` uses seed `seed + i`, so a seeded result depends on how many endpoints were reachable.
 - `condition`: required with `query_mode="condition"` and forbidden otherwise. One `EqualityCondition` or `IntervalCondition`, or a list of them, each covering the future positions its `query_time_indices` names; sent on the wire as the `conditions` list, see below.
 
 ### Conditional Queries

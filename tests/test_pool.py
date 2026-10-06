@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -34,6 +35,8 @@ from jointfm_client import (
     UnsupportedServiceContractError,
 )
 from jointfm_client.transport import JSONTransport
+
+_OVERLAP_PROBE_SECONDS = 0.02
 
 
 def _instance(deployment_id: str) -> JointFMInstanceSettings:
@@ -286,6 +289,46 @@ def test_pool_posts_concurrent_across_peers() -> None:
         instances[0].predict_url,
         instances[1].predict_url,
     }
+
+
+def test_pool_never_overlaps_two_posts_on_one_peer() -> None:
+    """More concurrent batches than peers queue per peer instead of overlapping."""
+    in_flight: dict[str, int] = {}
+    peak: dict[str, int] = {}
+    counter_lock = threading.Lock()
+
+    class _SlowTransport:
+        def get_json(self, url: str) -> Mapping[str, Any]:
+            raise AssertionError(f"unexpected GET {url}")
+
+        def post_json(self, url: str, payload: Mapping[str, Any]) -> Mapping[str, Any]:
+            del payload
+            with counter_lock:
+                in_flight[url] = in_flight.get(url, 0) + 1
+                peak[url] = max(peak.get(url, 0), in_flight[url])
+            time.sleep(_OVERLAP_PROBE_SECONDS)
+            with counter_lock:
+                in_flight[url] -= 1
+            return {"ok": True}
+
+    instances = (_instance("a"), _instance("b"))
+    pool = _pool(
+        instances=instances,
+        transports=(_SlowTransport(), _SlowTransport()),
+    )
+
+    batch_count = 6
+    with ThreadPoolExecutor(max_workers=batch_count) as executor:
+        futures = [
+            executor.submit(
+                pool.post_json_to, pool.instance_at(index), {"schema_version": "v5"}
+            )
+            for index in range(batch_count)
+        ]
+        for future in futures:
+            future.result(timeout=2.0)
+
+    assert peak == {instance.predict_url: 1 for instance in instances}
 
 
 def test_pool_health_routes_only_reachable_peers() -> None:
