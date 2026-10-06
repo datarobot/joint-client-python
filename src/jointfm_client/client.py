@@ -446,9 +446,9 @@ class JointFMClient:
         hinted_columns = [column for column in payload["columns"] if "traits" in column]
         if hinted_columns:
             require_metadata_trait_support(self.health(cache=True), hinted_columns)
-        sample_cap = self._resolve_sample_batch_cap(payload)
-        if sample_cap is not None:
-            return self._forecast_sample_batches(payload, sample_cap)
+        batch_sizes = self._resolve_sample_batch_sizes(payload)
+        if batch_sizes is not None:
+            return self._forecast_sample_batches(payload, batch_sizes)
 
         try:
             response_payload = self._post_predict_json(payload)
@@ -457,7 +457,10 @@ class JointFMClient:
             if sample_cap is None:
                 raise
             self._sample_batch_cap = sample_cap
-            return self._forecast_sample_batches(payload, sample_cap)
+            return self._forecast_sample_batches(
+                payload,
+                self._sample_batch_sizes(cast(int, payload["n_samples"]), sample_cap),
+            )
 
         return _forecast_response_from_payload(response_payload, payload)
 
@@ -810,40 +813,60 @@ class JointFMClient:
             query_rows=query_rows,
         )
 
-    def _resolve_sample_batch_cap(self, payload: Mapping[str, Any]) -> int | None:
-        """Return the batch size for an oversized sample request, if one applies.
+    def _resolve_sample_batch_sizes(
+        self, payload: Mapping[str, Any]
+    ) -> list[int] | None:
+        """Return per-request sample counts when a sample request is split.
 
         The deployment advertises its sampling budget as ``max_sample_count`` in
         `/healthz`, so an explicit sample request probes health once and batches
         locally instead of sending a request the service is guaranteed to reject.
         The cap is remembered for the client's lifetime. Clients configured
         without a reachable health route fall back to learning the cap from the
-        service's ``INPUT_SIZE_EXCEEDED`` response.
+        service's ``INPUT_SIZE_EXCEEDED`` response. Returns ``None`` when the
+        request goes out as one prediction.
         """
-        if _requested_sample_count(payload) is None:
+        requested_samples = _requested_sample_count(payload)
+        if requested_samples is None:
             return None
         if self._sample_batch_cap is None and self._health_route_configured():
             self.health()
-        return _known_sample_batch_cap(payload, self._sample_batch_cap)
+        if self._sample_batch_cap is None:
+            return None
+        batch_sizes = self._sample_batch_sizes(
+            requested_samples, self._sample_batch_cap
+        )
+        return batch_sizes if len(batch_sizes) > 1 else None
+
+    def _sample_batch_sizes(self, requested_samples: int, sample_cap: int) -> list[int]:
+        """Split ``requested_samples`` evenly into batches of at most ``sample_cap``.
+
+        A pool spreads every sample request over all routable peers, at least one
+        sample per batch, because downloading the response dominates a sample
+        request and concurrent downloads from separate peers overlap. A single
+        endpoint batches only what exceeds its cap.
+        """
+        peer_count = self._require_pool().instance_count if self._uses_pool() else 1
+        batch_count = max(
+            -(-requested_samples // sample_cap), min(requested_samples, peer_count)
+        )
+        base_size, remainder = divmod(requested_samples, batch_count)
+        return [
+            base_size + (1 if batch_index < remainder else 0)
+            for batch_index in range(batch_count)
+        ]
 
     def _forecast_sample_batches(
         self,
         payload: Mapping[str, Any],
-        sample_cap: int,
+        batch_sizes: Sequence[int],
     ) -> SampleForecastResult:
-        requested_samples = cast(int, payload["n_samples"])
-        remaining_samples = requested_samples
         batch_payloads: list[dict[str, Any]] = []
-        batch_index = 0
-
-        while remaining_samples > 0:
-            batch_samples = min(sample_cap, remaining_samples)
+        for batch_index, batch_samples in enumerate(batch_sizes):
             batch_payload = dict(payload)
             batch_payload["n_samples"] = batch_samples
             _set_batch_seed(batch_payload, batch_index)
             batch_payloads.append(batch_payload)
-            remaining_samples -= batch_samples
-            batch_index += 1
 
         if self._uses_pool() and len(batch_payloads) > 1:
             batch_results = self._forecast_sample_batches_parallel(batch_payloads)
@@ -864,6 +887,8 @@ class JointFMClient:
         self, batch_payloads: Sequence[Mapping[str, Any]]
     ) -> list[SampleForecastResult]:
         pool = self._require_pool()
+        # Batches beyond the peer count queue on the per-peer POST lock, so no
+        # peer ever serves two of this client's batches at once.
         max_workers = min(len(batch_payloads), pool.instance_count)
 
         def _run_batch(item: tuple[int, Mapping[str, Any]]) -> SampleForecastResult:
@@ -1172,20 +1197,6 @@ def _sample_batch_cap_from_error(
         return None
     reported_requested_samples, sample_cap = cap_details
     if reported_requested_samples != requested_samples:
-        return None
-    if requested_samples <= sample_cap:
-        return None
-    return sample_cap
-
-
-def _known_sample_batch_cap(
-    payload: Mapping[str, Any],
-    sample_cap: int | None,
-) -> int | None:
-    if sample_cap is None:
-        return None
-    requested_samples = _requested_sample_count(payload)
-    if requested_samples is None:
         return None
     if requested_samples <= sample_cap:
         return None

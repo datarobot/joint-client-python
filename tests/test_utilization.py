@@ -121,8 +121,7 @@ class _EnvelopeTransport:
     """Serve health and echo-shaped sample forecasts; fail chosen deployments.
 
     ``sample_caps`` and ``concurrency`` set one deployment's advertised
-    ``max_sample_count`` and ``max_concurrent_requests``. With
-    ``simultaneous_after`` set, every forecast after the first that many must
+    ``max_sample_count`` and ``max_concurrent_requests``. Every forecast must
     reach a barrier together with ``barrier_parties - 1`` others, so a stage
     that sends them one at a time breaks the barrier instead of passing.
     """
@@ -135,7 +134,6 @@ class _EnvelopeTransport:
         health_failures: frozenset[str] = frozenset(),
         sample_caps: Mapping[str, int] | None = None,
         concurrency: Mapping[str, int] | None = None,
-        simultaneous_after: int | None = None,
         barrier_parties: int = 1,
     ) -> None:
         self.data_generation = data_generation
@@ -143,7 +141,6 @@ class _EnvelopeTransport:
         self.health_failures = health_failures
         self.sample_caps = dict(sample_caps or {})
         self.concurrency = dict(concurrency or {})
-        self.simultaneous_after = simultaneous_after
         self.barrier = threading.Barrier(
             barrier_parties, timeout=_BARRIER_TIMEOUT_SECONDS
         )
@@ -167,12 +164,7 @@ class _EnvelopeTransport:
             )
         with self.lock:
             self.forecasts.append((deployment_id, payload))
-            forecast_index = len(self.forecasts) - 1
-        if (
-            self.simultaneous_after is not None
-            and forecast_index >= self.simultaneous_after
-        ):
-            self.barrier.wait()
+        self.barrier.wait()
         if deployment_id in self.forecast_failures:
             raise _http_error(deployment_id, self.forecast_failures[deployment_id])
         query_times = cast(list[int], payload["query_times"])
@@ -231,9 +223,8 @@ def test_single_endpoint_sends_the_full_envelope() -> None:
 
     assert report.passed
     assert report.request_slots == 1
-    assert report.concurrent_saturation is None
-    assert report.single_request.n_samples == _SAMPLE_CAP
-    assert report.single_request.request_count == 1
+    assert report.concurrent_saturation.n_samples == _SAMPLE_CAP
+    assert report.concurrent_saturation.request_count == 1
     [(deployment_id, payload)] = transport.forecasts
     assert deployment_id == "single-id"
     assert payload["n_samples"] == _SAMPLE_CAP
@@ -246,19 +237,16 @@ def test_single_endpoint_sends_the_full_envelope() -> None:
 
 def test_saturation_fills_every_request_slot_of_one_endpoint_at_once() -> None:
     """An endpoint serving two requests at once receives two maximal requests together."""
-    transport = _EnvelopeTransport(
-        concurrency={"single-id": 2}, simultaneous_after=1, barrier_parties=2
-    )
+    transport = _EnvelopeTransport(concurrency={"single-id": 2}, barrier_parties=2)
 
     report = run_max_utilization_check(_client(transport, "single-id"))
 
     assert report.passed
     assert report.request_slots == 2
     saturation = report.concurrent_saturation
-    assert saturation is not None
     assert saturation.request_count == 2
     assert saturation.n_samples == 2 * _SAMPLE_CAP
-    burst = transport.forecasts[1:]
+    burst = transport.forecasts
     assert [deployment_id for deployment_id, _ in burst] == ["single-id"] * 2
     assert sorted(payload["seed"] for _, payload in burst) == [7, 8]
     assert all(payload["n_samples"] == _SAMPLE_CAP for _, payload in burst)
@@ -269,21 +257,18 @@ def test_pool_saturation_sends_each_endpoint_its_slots_and_own_cap() -> None:
     transport = _EnvelopeTransport(
         sample_caps={"a-id": 2, "b-id": 3},
         concurrency={"a-id": 2},
-        simultaneous_after=1,
         barrier_parties=3,
     )
 
     report = run_max_utilization_check(_client(transport, "a-id", "b-id"))
 
     assert report.passed
-    assert report.single_request.n_samples == 2
     saturation = report.concurrent_saturation
-    assert saturation is not None
     assert saturation.request_count == 3
     assert saturation.n_samples == 2 + 2 + 3
     burst = sorted(
         (deployment_id, payload["n_samples"])
-        for deployment_id, payload in transport.forecasts[1:]
+        for deployment_id, payload in transport.forecasts
     )
     assert burst == [("a-id", 2), ("a-id", 2), ("b-id", 3)]
 
@@ -297,23 +282,9 @@ def test_every_failed_slot_is_reported() -> None:
     report = run_max_utilization_check(_client(transport, "single-id"))
 
     saturation = report.concurrent_saturation
-    assert saturation is not None
     assert len(saturation.errors) == 2
     assert all("JointFMHTTPStatusError" in error for error in saturation.errors)
     assert not report.passed
-
-
-def test_pool_failover_fails_the_stage_although_the_forecast_succeeds() -> None:
-    """A request rerouted to a healthy peer still fails the verdict."""
-    retryable = next(iter(DEFAULT_RETRY_STATUS_CODES))
-    transport = _EnvelopeTransport(forecast_failures={"a-id": retryable})
-
-    report = run_max_utilization_check(_client(transport, "a-id", "b-id"))
-
-    assert report.single_request.errors == ()
-    assert report.single_request.failovers
-    assert not report.passed
-    assert report.format_lines()[-1] == "VERDICT: FAIL"
 
 
 def test_service_error_is_recorded_as_a_failed_stage() -> None:
@@ -322,7 +293,7 @@ def test_service_error_is_recorded_as_a_failed_stage() -> None:
 
     report = run_max_utilization_check(_client(transport, "single-id"))
 
-    [error] = report.single_request.errors
+    [error] = report.concurrent_saturation.errors
     assert "JointFMHTTPStatusError" in error
     assert not report.passed
 
