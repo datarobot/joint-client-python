@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import io
+import threading
 from typing import Any, cast
 
 import pytest
@@ -46,6 +47,7 @@ _DATA_GENERATION = {
     "n_output": 2,
 }
 _SAMPLE_CAP = 2
+_BARRIER_TIMEOUT_SECONDS = 5.0
 
 
 def _url(deployment_id: str) -> str:
@@ -81,7 +83,12 @@ def _settings(*deployment_ids: str) -> JointFMSettings:
     )
 
 
-def _health_payload(*, data_generation: bool = True) -> dict[str, Any]:
+def _health_payload(
+    *,
+    data_generation: bool = True,
+    max_sample_count: int = _SAMPLE_CAP,
+    max_concurrent_requests: int = 1,
+) -> dict[str, Any]:
     """Health payload advertising a small capacity envelope."""
     payload: dict[str, Any] = {
         "status": "ok",
@@ -102,7 +109,8 @@ def _health_payload(*, data_generation: bool = True) -> dict[str, Any]:
             "absolute_datetime",
         ],
         "time_index_encoding": "legacy_discrete_grid",
-        "max_sample_count": _SAMPLE_CAP,
+        "max_sample_count": max_sample_count,
+        "max_concurrent_requests": max_concurrent_requests,
     }
     if data_generation:
         payload["data_generation"] = dict(_DATA_GENERATION)
@@ -110,7 +118,14 @@ def _health_payload(*, data_generation: bool = True) -> dict[str, Any]:
 
 
 class _EnvelopeTransport:
-    """Serve health and echo-shaped sample forecasts; fail chosen deployments."""
+    """Serve health and echo-shaped sample forecasts; fail chosen deployments.
+
+    ``sample_caps`` and ``concurrency`` set one deployment's advertised
+    ``max_sample_count`` and ``max_concurrent_requests``. With
+    ``simultaneous_after`` set, every forecast after the first that many must
+    reach a barrier together with ``barrier_parties - 1`` others, so a stage
+    that sends them one at a time breaks the barrier instead of passing.
+    """
 
     def __init__(
         self,
@@ -118,10 +133,21 @@ class _EnvelopeTransport:
         data_generation: bool = True,
         forecast_failures: Mapping[str, int] | None = None,
         health_failures: frozenset[str] = frozenset(),
+        sample_caps: Mapping[str, int] | None = None,
+        concurrency: Mapping[str, int] | None = None,
+        simultaneous_after: int | None = None,
+        barrier_parties: int = 1,
     ) -> None:
         self.data_generation = data_generation
         self.forecast_failures = dict(forecast_failures or {})
         self.health_failures = health_failures
+        self.sample_caps = dict(sample_caps or {})
+        self.concurrency = dict(concurrency or {})
+        self.simultaneous_after = simultaneous_after
+        self.barrier = threading.Barrier(
+            barrier_parties, timeout=_BARRIER_TIMEOUT_SECONDS
+        )
+        self.lock = threading.Lock()
         self.forecasts: list[tuple[str, Mapping[str, Any]]] = []
 
     def get_json(self, url: str) -> Mapping[str, Any]:
@@ -134,10 +160,21 @@ class _EnvelopeTransport:
         if payload.get("request_type") == "health":
             if deployment_id in self.health_failures:
                 raise _http_error(deployment_id, next(iter(DEFAULT_RETRY_STATUS_CODES)))
-            return _health_payload(data_generation=self.data_generation)
+            return _health_payload(
+                data_generation=self.data_generation,
+                max_sample_count=self.sample_caps.get(deployment_id, _SAMPLE_CAP),
+                max_concurrent_requests=self.concurrency.get(deployment_id, 1),
+            )
+        with self.lock:
+            self.forecasts.append((deployment_id, payload))
+            forecast_index = len(self.forecasts) - 1
+        if (
+            self.simultaneous_after is not None
+            and forecast_index >= self.simultaneous_after
+        ):
+            self.barrier.wait()
         if deployment_id in self.forecast_failures:
             raise _http_error(deployment_id, self.forecast_failures[deployment_id])
-        self.forecasts.append((deployment_id, payload))
         query_times = cast(list[int], payload["query_times"])
         requested_columns = cast(list[str], payload["requested_columns"])
         samples = [
@@ -193,7 +230,8 @@ def test_single_endpoint_sends_the_full_envelope() -> None:
     report = run_max_utilization_check(_client(transport, "single-id"))
 
     assert report.passed
-    assert report.pool_saturation is None
+    assert report.request_slots == 1
+    assert report.concurrent_saturation is None
     assert report.single_request.n_samples == _SAMPLE_CAP
     assert report.single_request.request_count == 1
     [(deployment_id, payload)] = transport.forecasts
@@ -206,18 +244,63 @@ def test_single_endpoint_sends_the_full_envelope() -> None:
     assert report.format_lines()[-1] == "VERDICT: PASS"
 
 
-def test_pool_saturation_sends_one_capped_batch_per_endpoint() -> None:
-    """A pool stage asks for the summed cap and hits every endpoint once."""
-    transport = _EnvelopeTransport()
+def test_saturation_fills_every_request_slot_of_one_endpoint_at_once() -> None:
+    """An endpoint serving two requests at once receives two maximal requests together."""
+    transport = _EnvelopeTransport(
+        concurrency={"single-id": 2}, simultaneous_after=1, barrier_parties=2
+    )
+
+    report = run_max_utilization_check(_client(transport, "single-id"))
+
+    assert report.passed
+    assert report.request_slots == 2
+    saturation = report.concurrent_saturation
+    assert saturation is not None
+    assert saturation.request_count == 2
+    assert saturation.n_samples == 2 * _SAMPLE_CAP
+    burst = transport.forecasts[1:]
+    assert [deployment_id for deployment_id, _ in burst] == ["single-id"] * 2
+    assert sorted(payload["seed"] for _, payload in burst) == [7, 8]
+    assert all(payload["n_samples"] == _SAMPLE_CAP for _, payload in burst)
+
+
+def test_pool_saturation_sends_each_endpoint_its_slots_and_own_cap() -> None:
+    """Every pool slot is filled at once, each with its endpoint's own sample cap."""
+    transport = _EnvelopeTransport(
+        sample_caps={"a-id": 2, "b-id": 3},
+        concurrency={"a-id": 2},
+        simultaneous_after=1,
+        barrier_parties=3,
+    )
 
     report = run_max_utilization_check(_client(transport, "a-id", "b-id"))
 
     assert report.passed
-    assert report.pool_saturation is not None
-    assert report.pool_saturation.n_samples == 2 * _SAMPLE_CAP
-    assert report.pool_saturation.request_count == 2
-    pool_targets = [deployment_id for deployment_id, _ in transport.forecasts[1:]]
-    assert sorted(pool_targets) == ["a-id", "b-id"]
+    assert report.single_request.n_samples == 2
+    saturation = report.concurrent_saturation
+    assert saturation is not None
+    assert saturation.request_count == 3
+    assert saturation.n_samples == 2 + 2 + 3
+    burst = sorted(
+        (deployment_id, payload["n_samples"])
+        for deployment_id, payload in transport.forecasts[1:]
+    )
+    assert burst == [("a-id", 2), ("a-id", 2), ("b-id", 3)]
+
+
+def test_every_failed_slot_is_reported() -> None:
+    """A burst records one error per failed request, not only the first."""
+    transport = _EnvelopeTransport(
+        forecast_failures={"single-id": 500}, concurrency={"single-id": 2}
+    )
+
+    report = run_max_utilization_check(_client(transport, "single-id"))
+
+    saturation = report.concurrent_saturation
+    assert saturation is not None
+    assert len(saturation.errors) == 2
+    assert all("JointFMHTTPStatusError" in error for error in saturation.errors)
+    assert not report.passed
 
 
 def test_pool_failover_fails_the_stage_although_the_forecast_succeeds() -> None:
@@ -227,7 +310,7 @@ def test_pool_failover_fails_the_stage_although_the_forecast_succeeds() -> None:
 
     report = run_max_utilization_check(_client(transport, "a-id", "b-id"))
 
-    assert report.single_request.error is None
+    assert report.single_request.errors == ()
     assert report.single_request.failovers
     assert not report.passed
     assert report.format_lines()[-1] == "VERDICT: FAIL"
@@ -239,8 +322,8 @@ def test_service_error_is_recorded_as_a_failed_stage() -> None:
 
     report = run_max_utilization_check(_client(transport, "single-id"))
 
-    assert report.single_request.error is not None
-    assert "JointFMHTTPStatusError" in report.single_request.error
+    [error] = report.single_request.errors
+    assert "JointFMHTTPStatusError" in error
     assert not report.passed
 
 
@@ -252,6 +335,31 @@ def test_unavailable_pool_endpoint_fails_the_verdict() -> None:
 
     assert report.unavailable_instances == ("b-id",)
     assert not report.passed
+
+
+@pytest.mark.parametrize(
+    ("deployment_ids", "unknown_id"),
+    [(("single-id",), "other-id"), (("a-id", "b-id"), "c-id")],
+)
+def test_endpoint_client_rejects_an_unconfigured_deployment(
+    deployment_ids: tuple[str, ...], unknown_id: str
+) -> None:
+    """A slot client is only built for a deployment the client already targets."""
+    client = _client(_EnvelopeTransport(), *deployment_ids)
+
+    with pytest.raises(JointFMConfigurationError, match=unknown_id):
+        client.endpoint_client(unknown_id)
+
+
+def test_pool_endpoint_client_targets_only_its_instance() -> None:
+    """A pool instance's client posts to that instance alone, never through the pool."""
+    transport = _EnvelopeTransport()
+    endpoint = _client(transport, "a-id", "b-id").endpoint_client("b-id")
+
+    assert endpoint.settings is not None
+    assert endpoint.settings.instances == ()
+    assert endpoint.predict_url == _url("b-id")
+    assert endpoint.health(cache=True).max_concurrent_requests == 1
 
 
 def test_retrying_client_is_rejected() -> None:

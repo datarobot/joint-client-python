@@ -82,9 +82,11 @@ class InstanceHealth:
 class HealthInstances:
     """Per-deployment health results and the summed sample budget.
 
-    ``max_sample_count`` is the sum of reachable peers' caps (overall parallel
-    capacity). ``topology`` groups those caps as ``(count, cap)`` pairs sorted by
-    descending cap; unavailable instances are omitted from both.
+    ``max_sample_count`` is the sum of reachable peers' caps, one request per
+    peer; a peer advertising ``max_concurrent_requests`` above one serves that
+    many such requests at once. ``topology`` groups those caps as
+    ``(count, cap)`` pairs sorted by descending cap; unavailable instances are
+    omitted from both.
     """
 
     instances: tuple[InstanceHealth, ...]
@@ -227,15 +229,16 @@ class PoolHealthGate:
             raise last_error
 
         reference = healthy[0][1]
-        max_samples = reference.max_sample_count
         for peer, metadata in healthy[1:]:
             _reject_metadata_mismatch(peer.deployment_id, metadata, reference)
-            max_samples = min(max_samples, metadata.max_sample_count)
-
-        metadata = (
-            reference
-            if max_samples == reference.max_sample_count
-            else replace(reference, max_sample_count=max_samples)
+        metadata = replace(
+            reference,
+            max_sample_count=min(
+                peer_metadata.max_sample_count for _, peer_metadata in healthy
+            ),
+            max_concurrent_requests=min(
+                peer_metadata.max_concurrent_requests for _, peer_metadata in healthy
+            ),
         )
         return HealthProbeResult(
             metadata=metadata,
@@ -306,7 +309,7 @@ class JointFMInstancePool:
         return result
 
     def probe_all_health(self) -> HealthMetadata:
-        """Probe peers; require matching model/checkpoint; return min sample cap.
+        """Probe peers; require matching model/checkpoint; return minimum caps.
 
         Per-peer transport or contract failures skip that peer. The pool fails
         only when no peer is usable, or when usable peers disagree with each

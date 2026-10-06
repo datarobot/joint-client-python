@@ -120,7 +120,7 @@ Direct local URL helpers are used by the local service selector: `build_local_he
 
 Hosted settings also derive `health_url` from the resolved deployment URL as `deployments/{deployment_id}/healthz`. `JointFMClient.health(cache=True)` stores typed `HealthMetadata` only when the caller asks for caching, and `JointFMClient.refresh_health()` fetches a fresh copy.
 
-Each endpoint's health payload describes only that endpoint. With `JOINTFM_DEPLOYMENT_IDS`, the client probes every configured peer and aggregates locally: `health()` returns consensus metadata whose `max_sample_count` is the **minimum** reachable cap (the sample-batch size), while `health_instances()` returns one `InstanceHealth` per configured ID plus the **sum** of reachable caps as overall parallel capacity, a compact `topology` / `topology_label` (for example `2x5000` or `1x7000, 1x3000`), and errors for unavailable peers.
+Each endpoint's health payload describes only that endpoint. With `JOINTFM_DEPLOYMENT_IDS`, the client probes every configured peer and aggregates locally: `health()` returns consensus metadata whose `max_sample_count` is the **minimum** reachable cap (the sample-batch size), while `health_instances()` returns one `InstanceHealth` per configured ID plus the **sum** of reachable caps (one request per instance; each instance's `max_concurrent_requests` says how many such requests it serves at once), a compact `topology` / `topology_label` (for example `2x5000` or `1x7000, 1x3000`), and errors for unavailable peers.
 
 ## CLI Workflows
 
@@ -132,7 +132,7 @@ Validate credentials, resolve the deployment, probe health, and print non-secret
 uv run jointfm-client health
 ```
 
-The health command includes consensus `service` metadata, an `instances` list (available/unavailable, per-instance sample cap, errors), `topology` (for example `1x7000, 1x3000`), overall `max_sample_count` (sum of reachable caps), and non-secret `deployment` settings when configured.
+The health command includes consensus `service` metadata, an `instances` list (available/unavailable, per-instance sample cap and request concurrency, errors), `topology` (for example `1x7000, 1x3000`), overall `max_sample_count` (sum of reachable caps), and non-secret `deployment` settings when configured.
 
 Submit one low-level JSON request file and write the JSON response file:
 
@@ -157,7 +157,7 @@ Check that the deployment serves the largest request its health envelope adverti
 uv run jointfm-client max-utilization
 ```
 
-`max-utilization` sends a seeded synthetic sample forecast with `max_series` target columns, an `n_input`-row history, an `n_output`-step horizon, and `max_sample_count` samples. With `JOINTFM_DEPLOYMENT_IDS` it also asks for the pool's summed sample capacity, which loads every endpoint at once. It prints the wall-clock time of each stage and a final `VERDICT: PASS` or `VERDICT: FAIL` line. It exits with status 1 on FAIL: when a stage raises a service or transport error, when the pool fails a request over to another endpoint, or when an endpoint fails the health probe. Retries are disabled for this command, so a request that fails under load is reported instead of retried. Each run uses real GPU time on the deployment. `task max-utilization` runs the same command, and `notebooks/max_utilization.ipynb` shows the per-stage timings as a table.
+`max-utilization` sends a seeded synthetic sample forecast with `max_series` target columns, an `n_input`-row history, an `n_output`-step horizon, and `max_sample_count` samples. It then fills every request slot at once: each reachable endpoint (every pool instance with `JOINTFM_DEPLOYMENT_IDS`) receives as many simultaneous maximal requests as its `max_concurrent_requests` admits. It prints the wall-clock time of each stage and a final `VERDICT: PASS` or `VERDICT: FAIL` line. It exits with status 1 on FAIL: when a stage raises a service or transport error, when the pool fails a request over to another endpoint, or when an endpoint fails the health probe. Retries are disabled for this command, so a request that fails under load is reported instead of retried. Each run uses real GPU time on the deployment. `task max-utilization` runs the same command, and `notebooks/max_utilization.ipynb` shows the per-stage timings as a table.
 
 ## Notebook Workflows
 

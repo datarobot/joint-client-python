@@ -76,6 +76,7 @@ class FakeHealthClient:
             ),
             time_index_encoding="legacy_discrete_grid",
             max_sample_count=4096,
+            max_concurrent_requests=1,
         )
 
     def health_instances(
@@ -155,6 +156,7 @@ def test_health_command_prints_non_secret_metadata(monkeypatch, capsys) -> None:
             "deployment_id": "deployment-id",
             "available": True,
             "max_sample_count": 4096,
+            "max_concurrent_requests": 1,
             "error": None,
         }
     ]

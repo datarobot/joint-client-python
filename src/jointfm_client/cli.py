@@ -179,6 +179,11 @@ def _health_command(args: argparse.Namespace, stdout: TextIO) -> int:
                 "max_sample_count": (
                     None if entry.metadata is None else entry.metadata.max_sample_count
                 ),
+                "max_concurrent_requests": (
+                    None
+                    if entry.metadata is None
+                    else entry.metadata.max_concurrent_requests
+                ),
                 "error": entry.error,
             }
             for entry in instances.instances

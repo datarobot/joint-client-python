@@ -65,6 +65,7 @@ class _HealthTransport:
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": 4096,
+        "max_concurrent_requests": 1,
     }
 
     def get_json(self, url: str) -> dict[str, object]:

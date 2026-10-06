@@ -74,6 +74,7 @@ def _health(
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": max_sample_count,
+        "max_concurrent_requests": 1,
     }
 
 

@@ -94,6 +94,7 @@ def _health_metadata() -> dict[str, object]:
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": 4096,
+        "max_concurrent_requests": 1,
         "data_generation": {
             "sampler_type": "studentt",
             "min_series": 1,
@@ -813,6 +814,19 @@ def test_health_metadata_parses_the_series_envelope() -> None:
     assert health.data_generation is not None
     assert health.data_generation.min_series == 1
     assert health.data_generation.max_series == 16
+
+
+@pytest.mark.parametrize("value", [None, 0, 1.5])
+def test_health_metadata_requires_a_positive_concurrency(value: object) -> None:
+    """Request concurrency is advertised capacity, so a missing or invalid value fails."""
+    metadata = _health_metadata()
+    if value is None:
+        del metadata["max_concurrent_requests"]
+    else:
+        metadata["max_concurrent_requests"] = value
+
+    with pytest.raises(ValueError, match="max_concurrent_requests"):
+        HealthMetadata.from_payload(metadata)
 
 
 def test_health_metadata_rejects_missing_series_bounds() -> None:

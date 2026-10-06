@@ -54,6 +54,7 @@ def _health(traits: list[str] | None) -> dict[str, Any]:
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": 64,
+        "max_concurrent_requests": 1,
     }
     if traits is not None:
         payload["supported_metadata_traits"] = traits

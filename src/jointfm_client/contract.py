@@ -817,7 +817,12 @@ class DataGenerationCapabilities:
 
 @dataclass(frozen=True, slots=True)
 class HealthMetadata:
-    """Typed representation of `/healthz` service metadata."""
+    """Typed representation of `/healthz` service metadata.
+
+    ``max_sample_count`` caps the samples one request may ask for, and
+    ``max_concurrent_requests`` is how many requests the container serves at
+    once; a further request waits for a free slot.
+    """
 
     status: str
     schema_version: str
@@ -834,6 +839,7 @@ class HealthMetadata:
     supported_time_index_modes: tuple[str, ...]
     time_index_encoding: str
     max_sample_count: int
+    max_concurrent_requests: int
     data_generation: DataGenerationCapabilities | None = None
     supported_metadata_traits: tuple[str, ...] = ()
 
@@ -906,6 +912,10 @@ class HealthMetadata:
             max_sample_count=_require_positive_int(
                 payload.get("max_sample_count"),
                 field="max_sample_count",
+            ),
+            max_concurrent_requests=_require_positive_int(
+                payload.get("max_concurrent_requests"),
+                field="max_concurrent_requests",
             ),
             data_generation=parsed_data_generation,
             supported_metadata_traits=(
