@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from jointfm_client import (
@@ -133,7 +134,7 @@ def test_local_surface_uses_direct_service_routes_without_hosted_auth(
         )
 
         assert health.model_version == request_payload["model_version"]
-        assert result.mean == ((12.0,),)
+        np.testing.assert_array_equal(result.mean, ((12.0,),))
         assert [entry["path"] for entry in handler.requests] == ["/healthz", "/predict"]
         assert "Authorization" not in handler.requests[0]["headers"]
         assert "Authorization" not in handler.requests[1]["headers"]

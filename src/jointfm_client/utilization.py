@@ -1,0 +1,424 @@
+# Copyright 2026 DataRobot, Inc. and its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Maximum-utilization check against a live JointFM deployment.
+
+The check reads the capacity envelope a deployment advertises in `/healthz`
+and sends the largest sample forecast that envelope admits: ``max_series``
+target columns, an ``n_input``-row history, an ``n_output``-step horizon, and
+the full sample budget. Every column is a target, because targets are what the
+response carries, so this is also the largest response the deployment can be
+asked for. Every request slot the reachable endpoints advertise
+(``max_concurrent_requests`` per endpoint) is then filled at once with one such
+request each. The outcome is a pass or fail verdict plus the wall-clock time
+of every stage.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+import logging
+import random
+import time
+
+from jointfm_client.capabilities import ForecastPlan, plan_forecast_columns
+from jointfm_client.client import JointFMClient
+from jointfm_client.contract import DataGenerationCapabilities
+from jointfm_client.exceptions import (
+    JointFMCapacityError,
+    JointFMConfigurationError,
+    JointFMError,
+)
+
+POOL_LOGGER_NAME = "jointfm_client.pool"
+SINGLE_REQUEST_STAGE = "single_request"
+CONCURRENT_SATURATION_STAGE = "concurrent_saturation"
+SYNTHETIC_COLUMN_PREFIX = "series_"
+SYNTHETIC_START_VALUE = 100.0
+SYNTHETIC_STEP_SCALE = 1.0
+DEFAULT_UTILIZATION_SEED = 7
+
+
+@dataclass(frozen=True, slots=True)
+class UtilizationStage:
+    """Outcome of one maximal forecast stage.
+
+    ``n_samples`` is the total sample count the stage asked for and
+    ``request_count`` how many maximal requests it sent at once: one for
+    ``single_request``, one per request slot for ``concurrent_saturation``.
+    ``wallclock_seconds`` spans request building, every round trip, and
+    response parsing, so it bounds each single request's duration from above.
+    ``failovers`` holds the pool's "instance unavailable" warnings logged
+    during the stage: the pool reroutes a failed request to another endpoint,
+    so the forecast can still succeed although one endpoint could not serve
+    it, and the stage counts that as a failure. ``errors`` holds one entry per
+    request that ended in a JointFM error or a wrong sample count.
+    """
+
+    name: str
+    n_samples: int
+    request_count: int
+    wallclock_seconds: float
+    failovers: tuple[str, ...]
+    errors: tuple[str, ...]
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every request completed without error or failover."""
+        return not self.errors and not self.failovers
+
+
+@dataclass(frozen=True, slots=True)
+class MaxUtilizationReport:
+    """Verdict and timings of one maximum-utilization check.
+
+    ``envelope`` is the advertised capacity the requests were sized from.
+    ``unavailable_instances`` lists configured deployment IDs that failed the
+    health probe; any entry fails the check, because the pool then runs below
+    its configured capacity. ``request_slots`` is the sum of
+    ``max_concurrent_requests`` over the reachable endpoints.
+    ``concurrent_saturation`` is ``None`` when that sum is one, where it would
+    repeat ``single_request``.
+    """
+
+    envelope: DataGenerationCapabilities
+    decoding_strategy: str
+    topology_label: str
+    request_slots: int
+    unavailable_instances: tuple[str, ...]
+    read_timeout_seconds: float
+    health_seconds: float
+    single_request: UtilizationStage
+    concurrent_saturation: UtilizationStage | None
+
+    @property
+    def stages(self) -> tuple[UtilizationStage, ...]:
+        """Return the stages that ran, in execution order."""
+        if self.concurrent_saturation is None:
+            return (self.single_request,)
+        return (self.single_request, self.concurrent_saturation)
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every endpoint was reachable and every stage passed."""
+        return not self.unavailable_instances and all(
+            stage.passed for stage in self.stages
+        )
+
+    def format_lines(self) -> list[str]:
+        """Return a human-readable report ending in the verdict line."""
+        envelope = self.envelope
+        lines = [
+            f"envelope:      max_series={envelope.max_series} "
+            f"n_input={envelope.n_input} n_output={envelope.n_output}",
+            f"decoding:      {self.decoding_strategy}",
+            f"topology:      {self.topology_label}",
+            f"request slots: {self.request_slots}",
+            f"read timeout:  {self.read_timeout_seconds:.1f}s per request",
+            f"health probe:  {self.health_seconds:.2f}s",
+        ]
+        lines.extend(
+            f"unavailable:   {deployment_id}"
+            for deployment_id in self.unavailable_instances
+        )
+        if self.concurrent_saturation is None:
+            lines.append(
+                f"{CONCURRENT_SATURATION_STAGE}: not applicable (one request slot)"
+            )
+        for stage in self.stages:
+            status = "PASS" if stage.passed else "FAIL"
+            lines.append(
+                f"{stage.name}: {status} n_samples={stage.n_samples} "
+                f"requests={stage.request_count} "
+                f"wallclock={stage.wallclock_seconds:.2f}s"
+            )
+            lines.extend(f"  failover: {message}" for message in stage.failovers)
+            lines.extend(f"  error: {error}" for error in stage.errors)
+        lines.append(f"VERDICT: {'PASS' if self.passed else 'FAIL'}")
+        return lines
+
+
+@dataclass(frozen=True, slots=True)
+class _MaximalRequest:
+    """The envelope-sized forecast inputs every stage sends."""
+
+    history: Sequence[Mapping[str, float]]
+    plan: ForecastPlan
+    query_times: Sequence[int]
+
+    def send(self, client: JointFMClient, *, n_samples: int, seed: int) -> str | None:
+        """Send one forecast; return an error when the sample count is wrong.
+
+        JointFM errors propagate to the caller, which records them.
+        """
+        result = client.forecast_samples(
+            self.history,
+            columns=self.plan.columns,
+            query_times=self.query_times,
+            requested_columns=self.plan.requested_columns,
+            n_samples=n_samples,
+            seed=seed,
+        )
+        if len(result.samples) != n_samples:
+            return f"expected {n_samples} samples, got {len(result.samples)}"
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class _RequestSlot:
+    """One request the saturation stage sends at the same time as the others."""
+
+    deployment_id: str | None
+    n_samples: int
+    seed: int
+
+
+def run_max_utilization_check(
+    client: JointFMClient,
+    *,
+    seed: int = DEFAULT_UTILIZATION_SEED,
+) -> MaxUtilizationReport:
+    """Send the largest advertised sample forecast and report the verdict.
+
+    ``single_request`` sends one maximal request. ``concurrent_saturation``
+    then fills every request slot of every reachable endpoint at once: each
+    endpoint receives ``max_concurrent_requests`` simultaneous requests for
+    its own ``max_sample_count``, each through its own single-endpoint client
+    (see :meth:`JointFMClient.endpoint_client`), so no client-side lock
+    serializes them. Slot ``i`` uses seed ``seed + i``.
+
+    The client must be built with ``JointFMRetryConfig(max_attempts=1)``: a
+    retried request would turn a failure at maximum load into a slower
+    success. Pool endpoints already send each request once and fail over
+    instead, and those failovers are recorded per stage.
+
+    Raises :class:`JointFMConfigurationError` when the client retries or when
+    the pool logger cannot emit warnings (failovers would go unseen), and
+    :class:`JointFMCapacityError` when the deployment advertises no
+    ``data_generation`` block. Errors raised while a stage runs are recorded
+    in that stage instead, so the report still shows every stage.
+    """
+    if client.retry_config.max_attempts != 1:
+        raise JointFMConfigurationError(
+            "run_max_utilization_check requires a client built with "
+            "JointFMRetryConfig(max_attempts=1); got "
+            f"max_attempts={client.retry_config.max_attempts}"
+        )
+    pool_logger = logging.getLogger(POOL_LOGGER_NAME)
+    if not pool_logger.isEnabledFor(logging.WARNING):
+        raise JointFMConfigurationError(
+            f"logger {POOL_LOGGER_NAME!r} must emit WARNING records so pool "
+            "failovers are visible to the utilization check"
+        )
+
+    health_started = time.perf_counter()
+    health = client.health(cache=True, refresh=True)
+    instances = client.health_instances(cache=True)
+    health_seconds = time.perf_counter() - health_started
+
+    envelope = health.data_generation
+    if envelope is None:
+        raise JointFMCapacityError(
+            "JointFM deployment health metadata is missing the 'data_generation' "
+            "block; the maximum-utilization check has no envelope to size from."
+        )
+    plan = plan_forecast_columns(
+        health=health,
+        feature_columns=(),
+        target_columns=[
+            f"{SYNTHETIC_COLUMN_PREFIX}{index}" for index in range(envelope.max_series)
+        ],
+        history_length=envelope.n_input,
+        query_times_length=envelope.n_output,
+    )
+    request = _MaximalRequest(
+        history=_synthetic_history(plan.target_columns, envelope.n_input, seed=seed),
+        plan=plan,
+        query_times=list(range(envelope.n_input, envelope.n_input + envelope.n_output)),
+    )
+    endpoint_slots = [
+        (instance.deployment_id, instance.metadata)
+        for instance in instances.instances
+        if instance.metadata is not None
+        for _ in range(instance.metadata.max_concurrent_requests)
+    ]
+    slots = tuple(
+        _RequestSlot(
+            deployment_id=deployment_id,
+            n_samples=metadata.max_sample_count,
+            seed=seed + index,
+        )
+        for index, (deployment_id, metadata) in enumerate(endpoint_slots)
+    )
+
+    single_request = _run_single_request(
+        client,
+        pool_logger=pool_logger,
+        request=request,
+        n_samples=health.max_sample_count,
+        seed=seed,
+    )
+    concurrent_saturation = None
+    if len(slots) > 1:
+        concurrent_saturation = _run_concurrent_saturation(
+            client, pool_logger=pool_logger, request=request, slots=slots
+        )
+
+    return MaxUtilizationReport(
+        envelope=envelope,
+        decoding_strategy=health.decoding_strategy,
+        topology_label=instances.topology_label,
+        request_slots=len(slots),
+        unavailable_instances=tuple(
+            str(instance.deployment_id)
+            for instance in instances.instances
+            if instance.metadata is None
+        ),
+        read_timeout_seconds=client.timeout.read_seconds,
+        health_seconds=health_seconds,
+        single_request=single_request,
+        concurrent_saturation=concurrent_saturation,
+    )
+
+
+class _FailoverRecorder(logging.Handler):
+    """Collect pool warnings emitted while one stage runs."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Store the formatted warning message."""
+        self.messages.append(record.getMessage())
+
+
+def _run_single_request(
+    client: JointFMClient,
+    *,
+    pool_logger: logging.Logger,
+    request: _MaximalRequest,
+    n_samples: int,
+    seed: int,
+) -> UtilizationStage:
+    recorder = _FailoverRecorder()
+    pool_logger.addHandler(recorder)
+    started = time.perf_counter()
+    try:
+        error = request.send(client, n_samples=n_samples, seed=seed)
+    # A service or transport failure under maximum load is the verdict itself,
+    # so it is recorded rather than propagated; other errors still raise.
+    except JointFMError as caught:
+        error = f"{type(caught).__name__}: {caught}"
+    finally:
+        wallclock_seconds = time.perf_counter() - started
+        pool_logger.removeHandler(recorder)
+    return UtilizationStage(
+        name=SINGLE_REQUEST_STAGE,
+        n_samples=n_samples,
+        request_count=1,
+        wallclock_seconds=wallclock_seconds,
+        failovers=tuple(recorder.messages),
+        errors=() if error is None else (error,),
+    )
+
+
+def _run_concurrent_saturation(
+    client: JointFMClient,
+    *,
+    pool_logger: logging.Logger,
+    request: _MaximalRequest,
+    slots: Sequence[_RequestSlot],
+) -> UtilizationStage:
+    """Send one maximal request per slot, all at once, and record each outcome.
+
+    Every slot client probes health before the burst starts, so the timed
+    burst holds forecasts only; a failed probe ends the stage before any
+    forecast is sent.
+    """
+    total_samples = sum(slot.n_samples for slot in slots)
+    slot_clients = tuple(client.endpoint_client(slot.deployment_id) for slot in slots)
+    try:
+        for slot_client in slot_clients:
+            slot_client.health(cache=True)
+    # Recorded for the same reason as in the single-request stage.
+    except JointFMError as caught:
+        return UtilizationStage(
+            name=CONCURRENT_SATURATION_STAGE,
+            n_samples=total_samples,
+            request_count=len(slots),
+            wallclock_seconds=0.0,
+            failovers=(),
+            errors=(
+                f"health probe before the burst: {type(caught).__name__}: {caught}",
+            ),
+        )
+
+    def _send_slot(index: int) -> str | None:
+        slot = slots[index]
+        try:
+            error = request.send(
+                slot_clients[index], n_samples=slot.n_samples, seed=slot.seed
+            )
+        # Recorded per slot for the same reason as in the single-request stage.
+        except JointFMError as caught:
+            error = f"{type(caught).__name__}: {caught}"
+        return (
+            None if error is None else f"slot {index} ({slot.deployment_id}): {error}"
+        )
+
+    recorder = _FailoverRecorder()
+    pool_logger.addHandler(recorder)
+    started = time.perf_counter()
+    try:
+        with ThreadPoolExecutor(max_workers=len(slots)) as executor:
+            outcomes = tuple(executor.map(_send_slot, range(len(slots))))
+    finally:
+        wallclock_seconds = time.perf_counter() - started
+        pool_logger.removeHandler(recorder)
+    return UtilizationStage(
+        name=CONCURRENT_SATURATION_STAGE,
+        n_samples=total_samples,
+        request_count=len(slots),
+        wallclock_seconds=wallclock_seconds,
+        failovers=tuple(recorder.messages),
+        errors=tuple(error for error in outcomes if error is not None),
+    )
+
+
+def _synthetic_history(
+    column_names: Sequence[str],
+    row_count: int,
+    *,
+    seed: int,
+) -> list[dict[str, float]]:
+    """Build seeded random-walk history rows, one walk per column."""
+    generator = random.Random(seed)
+    levels = dict.fromkeys(column_names, SYNTHETIC_START_VALUE)
+    rows: list[dict[str, float]] = []
+    for _ in range(row_count):
+        for name in column_names:
+            levels[name] += generator.gauss(0.0, SYNTHETIC_STEP_SCALE)
+        rows.append(dict(levels))
+    return rows
+
+
+__all__ = [
+    "DEFAULT_UTILIZATION_SEED",
+    "MaxUtilizationReport",
+    "UtilizationStage",
+    "run_max_utilization_check",
+]

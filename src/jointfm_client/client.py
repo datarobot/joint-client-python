@@ -18,11 +18,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 from typing import Any, Self, cast
 from urllib.parse import urlparse
+
+import numpy as np
 
 from jointfm_client.adapters import (
     build_forecast_payload_from_dataframe,
@@ -49,6 +51,7 @@ from jointfm_client.contract import (
     TimeValueKind,
     build_forecast_payload,
     require_condition_support,
+    require_metadata_trait_support,
     validate_service_metadata,
 )
 from jointfm_client.exceptions import (
@@ -72,6 +75,7 @@ from jointfm_client.contract import (
 from jointfm_client.pool import HealthInstances, InstanceHealth, JointFMInstancePool
 from jointfm_client.settings import (
     JointFMSettings,
+    build_hosted_deployment_url,
     load_settings,
     validate_jointfm_model_version,
 )
@@ -123,6 +127,7 @@ class JointFMClient:
             explicit_url=predict_url,
         )
         self._transport = transport
+        self._injected_transport = transport
         self._timeout = timeout
         self._retry_config = retry_config
         self._response_body_excerpt_characters = response_body_excerpt_characters
@@ -165,6 +170,16 @@ class JointFMClient:
             ),
         )
 
+    @property
+    def timeout(self) -> JointFMTimeoutConfig:
+        """Return the connect and read timeouts applied to every request."""
+        return self._timeout
+
+    @property
+    def retry_config(self) -> JointFMRetryConfig:
+        """Return the retry policy of the single-endpoint transport."""
+        return self._retry_config
+
     def health(self, *, cache: bool = False, refresh: bool = False) -> HealthMetadata:
         """Return service metadata from the configured JointFM endpoint.
 
@@ -177,7 +192,8 @@ class JointFMClient:
 
         When ``JOINTFM_DEPLOYMENT_IDS`` is set, reachable peers are probed and must
         share ``model_version`` and ``checkpoint_version``; the sample-batch cap is
-        the minimum ``max_sample_count`` across those peers. Use
+        the minimum ``max_sample_count`` across those peers, and the advertised
+        ``max_concurrent_requests`` is likewise the minimum. Use
         ``health_instances()`` for the per-deployment results of this probe.
         """
         return self._probe_health(cache=cache, refresh=refresh).metadata
@@ -190,14 +206,45 @@ class JointFMClient:
         A single-endpoint client yields one entry. A deployment-ID pool yields
         one entry per configured ID, including peers skipped as unreachable or
         incompatible. ``max_sample_count`` is the sum of each reachable instance's
-        ``max_sample_count`` (overall parallel capacity). ``topology`` /
-        ``topology_label`` group those caps (for example ``2x5000`` or
-        ``1x7000, 1x3000``); unavailable peers are listed but excluded from the
-        sum and topology. ``health()`` still returns the minimum reachable cap
+        ``max_sample_count``, one request per instance; each instance's own
+        ``max_concurrent_requests`` says how many such requests it serves at
+        once. ``topology`` / ``topology_label`` group those caps (for example
+        ``2x5000`` or ``1x7000, 1x3000``); unavailable peers are listed but
+        excluded from the sum and topology. ``health()`` still returns the minimum reachable cap
         used as the sample-batch size.
         """
         return HealthInstances.from_instances(
             self._probe_health(cache=cache, refresh=refresh).instances
+        )
+
+    def endpoint_client(self, deployment_id: str | None) -> JointFMClient:
+        """Return a new single-endpoint client for one configured deployment.
+
+        ``deployment_id`` names one instance of a ``JOINTFM_DEPLOYMENT_IDS``
+        pool; for a single-endpoint client it must equal this client's own
+        ``settings.deployment_id``, which is ``None`` for a local service. The
+        new client keeps this client's timeout and retry policy but owns its
+        own HTTP session and health cache, so several of them can send
+        requests to the same deployment at once. A transport injected into
+        this client is shared instead, as the pool shares it across peers.
+        Raises ``JointFMConfigurationError`` without settings or for a
+        deployment ID this client does not configure.
+        """
+        settings = self._require_settings("endpoint_client")
+        if self._uses_pool():
+            settings = _pool_instance_settings(settings, deployment_id)
+        elif deployment_id != settings.deployment_id:
+            raise JointFMConfigurationError(
+                f"deployment_id {deployment_id!r} is not configured; this client "
+                f"targets {settings.deployment_id!r}"
+            )
+        return JointFMClient(
+            settings=settings,
+            transport=self._injected_transport,
+            timeout=self._timeout,
+            retry_config=self._retry_config,
+            response_body_excerpt_characters=self._response_body_excerpt_characters,
+            datarobot_request_id_headers=self._datarobot_request_id_headers,
         )
 
     def _probe_health(self, *, cache: bool, refresh: bool) -> _ProbedHealth:
@@ -396,6 +443,9 @@ class JointFMClient:
                 condition=condition,
                 query_rows=query_rows,
             )
+        hinted_columns = [column for column in payload["columns"] if "traits" in column]
+        if hinted_columns:
+            require_metadata_trait_support(self.health(cache=True), hinted_columns)
         sample_cap = self._resolve_sample_batch_cap(payload)
         if sample_cap is not None:
             return self._forecast_sample_batches(payload, sample_cap)
@@ -1061,6 +1111,37 @@ def _is_history_row_sequence(value: Any) -> bool:
     )
 
 
+def _pool_instance_settings(
+    settings: JointFMSettings, deployment_id: str | None
+) -> JointFMSettings:
+    """Return single-deployment settings for one instance of a pool."""
+    instance = next(
+        (
+            instance
+            for instance in settings.instances
+            if instance.deployment_id == deployment_id
+        ),
+        None,
+    )
+    if instance is None:
+        raise JointFMConfigurationError(
+            f"deployment_id {deployment_id!r} is not one of the configured pool "
+            f"instances {[entry.deployment_id for entry in settings.instances]}"
+        )
+    assert settings.datarobot_endpoint is not None
+    return replace(
+        settings,
+        health_url=instance.predict_url,
+        predict_url=instance.predict_url,
+        deployment_selector="deployment_id",
+        instances=(),
+        deployment_id=instance.deployment_id,
+        deployment_url=build_hosted_deployment_url(
+            settings.datarobot_endpoint, instance.deployment_id
+        ),
+    )
+
+
 def _forecast_response_from_payload(
     response_payload: Mapping[str, Any],
     request_payload: Mapping[str, Any],
@@ -1160,12 +1241,11 @@ def _merge_sample_forecast_results(
         raise ValueError("sample batching produced no responses")
 
     first_result = batch_results[0]
-    merged_samples = tuple(
-        sample_values
-        for batch_result in batch_results
-        for sample_values in batch_result.samples
-    )
     _validate_sample_batch_results(batch_results, first_result)
+    merged_samples = np.concatenate(
+        [batch_result.samples for batch_result in batch_results], axis=0
+    )
+    merged_samples.flags.writeable = False
     requested_samples = cast(int, request_payload["n_samples"])
     if len(merged_samples) != requested_samples:
         raise ValueError(

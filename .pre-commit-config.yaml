@@ -1,6 +1,9 @@
 fail_fast: true
 exclude: ^private/
 default_install_hook_types: [pre-commit, commit-msg]
+# Hooks without their own `stages` run only before a commit; the commit-msg
+# stage then runs only the message check instead of every hook a second time.
+default_stages: [pre-commit]
 
 repos:
   - repo: local

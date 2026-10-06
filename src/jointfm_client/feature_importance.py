@@ -28,10 +28,12 @@ from collections.abc import Sequence
 import random
 from typing import Any
 
+import numpy as np
+
 
 def sample_w2_distance(
-    baseline: Sequence[float],
-    permuted: Sequence[float],
+    baseline: Sequence[float] | np.ndarray,
+    permuted: Sequence[float] | np.ndarray,
     *,
     location_invariant: bool = True,
 ) -> float:
@@ -51,21 +53,13 @@ def sample_w2_distance(
             f"sample vectors must have equal length; got {len(baseline)} and {len(permuted)}"
         )
 
-    left = list(baseline)
-    right = list(permuted)
+    left = np.asarray(baseline, dtype=np.float64)
+    right = np.asarray(permuted, dtype=np.float64)
     if location_invariant:
-        left_mean = sum(left) / len(left)
-        right_mean = sum(right) / len(right)
-        left = [value - left_mean for value in left]
-        right = [value - right_mean for value in right]
-
-    left.sort()
-    right.sort()
-    squared_gaps = sum(
-        (left_value - right_value) ** 2
-        for left_value, right_value in zip(left, right, strict=True)
-    )
-    return squared_gaps / len(left) / 2.0
+        left = left - left.mean()
+        right = right - right.mean()
+    squared_gaps = np.square(np.sort(left) - np.sort(right))
+    return float(squared_gaps.mean()) / 2.0
 
 
 def _is_history_row_sequence(history: Any) -> bool:
@@ -108,13 +102,13 @@ def feature_importance_entry(
     feature: str,
     horizons: Sequence[int],
     target_columns: Sequence[str],
-    baseline_samples: Sequence[Sequence[Sequence[float]]],
-    permuted_samples: Sequence[Sequence[Sequence[float]]],
+    baseline_samples: np.ndarray,
+    permuted_samples: np.ndarray,
     baseline_columns: Sequence[str],
 ) -> dict[str, Any]:
     """Score one permuted feature against the shared baseline forecast.
 
-    Returns ``{"feature": ..., "mean": {target: {horizon: value}}, "distance":
+    Both sample arrays have axis order ``(sample, horizon, column)``. Returns ``{"feature": ..., "mean": {target: {horizon: value}}, "distance":
     {target: {horizon: value}}}``, where ``mean`` is the absolute shift in
     forecast mean and ``distance`` is ``sample_w2_distance``, both indexed by
     every requested target and horizon.
@@ -126,15 +120,11 @@ def feature_importance_entry(
         mean_by_horizon: dict[int, float] = {}
         distance_by_horizon: dict[int, float] = {}
         for horizon_index, horizon in enumerate(horizons):
-            baseline_values = [
-                sample[horizon_index][target_index] for sample in baseline_samples
-            ]
-            permuted_values = [
-                sample[horizon_index][target_index] for sample in permuted_samples
-            ]
-            baseline_mean = sum(baseline_values) / len(baseline_values)
-            permuted_mean = sum(permuted_values) / len(permuted_values)
-            mean_by_horizon[horizon] = abs(permuted_mean - baseline_mean)
+            baseline_values = baseline_samples[:, horizon_index, target_index]
+            permuted_values = permuted_samples[:, horizon_index, target_index]
+            mean_by_horizon[horizon] = abs(
+                float(permuted_values.mean()) - float(baseline_values.mean())
+            )
             distance_by_horizon[horizon] = sample_w2_distance(
                 baseline_values, permuted_values
             )

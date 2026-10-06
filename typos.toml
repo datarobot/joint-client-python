@@ -38,6 +38,10 @@ ignore-parent = false
 
 [default]
 locale = "en-us"
+# NumPy spells the array flag `ndarray.flags.writeable`; allow only that API name.
+extend-ignore-re = [
+    "\\.flags\\.writeable",
+]
 
 [default.extend-words]
 "CPY" = "CPY"

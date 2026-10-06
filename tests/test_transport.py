@@ -23,6 +23,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Any, cast
 
+import numpy as np
 import pytest
 import requests
 from requests.adapters import BaseAdapter
@@ -172,6 +173,7 @@ def _health_payload(
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": 4096,
+        "max_concurrent_requests": 1,
     }
 
 
@@ -526,7 +528,9 @@ def test_transport_wraps_request_exceptions() -> None:
     ("body", "message"),
     [
         (b"", "empty response"),
+        (b" \n\t", "empty response"),
         (b"not-json", "non-JSON"),
+        (b'{"value": NaN}', "non-JSON"),
         (b"[]", "not an object"),
     ],
 )
@@ -550,6 +554,50 @@ def test_transport_rejects_malformed_json_responses(body: bytes, message: str) -
 
     assert exc_info.value.status_code == HTTPStatus.OK
     assert exc_info.value.datarobot_request_id == "decode-request-id"
+
+
+class _TextlessResponse(requests.Response):
+    """Response whose decoded text must not be built."""
+
+    @property
+    def text(self) -> str:  # type: ignore[override]
+        """Fail the test if the transport decodes the whole body to text."""
+        raise AssertionError("a successful response must not be decoded to text")
+
+
+def test_transport_decodes_success_bodies_without_building_text() -> None:
+    """A large body is parsed from its bytes; only an error builds its excerpt."""
+    response = _TextlessResponse()
+    response.status_code = HTTPStatus.OK
+    response._content = b'{"samples": [[1.5, 2.25]]}'
+    session = requests.Session()
+    session.mount("https://", StaticResponseAdapter(response))
+    transport = JointFMHTTPTransport(
+        session=session,
+        retry_config=JointFMRetryConfig(max_attempts=1),
+    )
+
+    assert transport.get_json("https://example.com/predict") == {
+        "samples": [[1.5, 2.25]]
+    }
+
+
+def test_decode_error_excerpt_keeps_the_body_prefix() -> None:
+    """The excerpt an error carries is the stripped start of the body."""
+    session = requests.Session()
+    session.mount(
+        "https://", StaticResponseAdapter(_response(body=b"  <html>gateway</html>"))
+    )
+    transport = JointFMHTTPTransport(
+        session=session,
+        retry_config=JointFMRetryConfig(max_attempts=1),
+        response_body_excerpt_characters=6,
+    )
+
+    with pytest.raises(JointFMResponseDecodeError) as exc_info:
+        transport.get_json("https://example.com/predict")
+
+    assert exc_info.value.response_body_excerpt == "<html>"
 
 
 def test_timeout_and_retry_config_reject_invalid_values() -> None:
@@ -801,8 +849,8 @@ def test_client_forecast_builds_payload_from_rows_and_returns_typed_response() -
 
     assert isinstance(result, ForecastResponse)
     assert isinstance(result, MeanForecastResult)
-    assert result.mean == ((12.0,),)
-    assert result.outputs.mean == ((12.0,),)
+    np.testing.assert_array_equal(result.mean, ((12.0,),))
+    np.testing.assert_array_equal(result.outputs.mean, ((12.0,),))
     assert transport.predict_url == "http://localhost:8080/predict"
     assert transport.payload == {
         "schema_version": "v5",
@@ -889,12 +937,15 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
     )
 
     assert isinstance(result, SampleForecastResult)
-    assert result.samples == (
-        ((0.0,),),
-        ((1.0,),),
-        ((2.0,),),
-        ((3.0,),),
-        ((4.0,),),
+    np.testing.assert_array_equal(
+        result.samples,
+        (
+            ((0.0,),),
+            ((1.0,),),
+            ((2.0,),),
+            ((3.0,),),
+            ((4.0,),),
+        ),
     )
     assert result.diagnostics.seed == 7
     assert [payload["n_samples"] for payload in transport.payloads] == [5, 2, 2, 1]
@@ -910,10 +961,13 @@ def test_client_forecast_samples_batches_when_service_reports_sample_cap() -> No
         seed=11,
     )
 
-    assert second_result.samples == (
-        ((5.0,),),
-        ((6.0,),),
-        ((7.0,),),
+    np.testing.assert_array_equal(
+        second_result.samples,
+        (
+            ((5.0,),),
+            ((6.0,),),
+            ((7.0,),),
+        ),
     )
     assert [payload["n_samples"] for payload in transport.payloads] == [
         5,
@@ -1001,12 +1055,15 @@ def test_client_forecast_samples_batches_from_advertised_health_sample_cap() -> 
     )
 
     assert isinstance(result, SampleForecastResult)
-    assert result.samples == (
-        ((0.0,),),
-        ((1.0,),),
-        ((2.0,),),
-        ((3.0,),),
-        ((4.0,),),
+    np.testing.assert_array_equal(
+        result.samples,
+        (
+            ((0.0,),),
+            ((1.0,),),
+            ((2.0,),),
+            ((3.0,),),
+            ((4.0,),),
+        ),
     )
     assert transport.health_count == 1
     assert [payload["n_samples"] for payload in transport.payloads] == [2, 2, 1]
@@ -1352,11 +1409,14 @@ def test_client_pool_forecast_samples_batches_across_peers() -> None:
 
     assert isinstance(result, SampleForecastResult)
     assert len(result.samples) == 4
-    assert result.samples == (
-        ((0.0,),),
-        ((1.0,),),
-        ((2.0,),),
-        ((3.0,),),
+    np.testing.assert_array_equal(
+        result.samples,
+        (
+            ((0.0,),),
+            ((1.0,),),
+            ((2.0,),),
+            ((3.0,),),
+        ),
     )
     assert set(predict_urls) == {primary, backup}
     assert len(predict_urls) == 2

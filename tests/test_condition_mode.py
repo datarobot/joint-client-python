@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from jointfm_client import (
@@ -113,6 +114,7 @@ def _health(
         supported_time_index_modes=("ordinal",),
         time_index_encoding="ordinal",
         max_sample_count=10000,
+        max_concurrent_requests=1,
     )
 
 
@@ -571,6 +573,7 @@ def _health_payload(
         ],
         "time_index_encoding": "legacy_discrete_grid",
         "max_sample_count": max_sample_count,
+        "max_concurrent_requests": 1,
     }
 
 
@@ -615,7 +618,7 @@ def test_the_client_sends_the_condition_and_reads_the_answer_back(
     assert isinstance(result, MeanForecastResult)
     assert result.query_mode == "condition"
     assert result.query_times == (2, 3)
-    assert result.mean == ((12.0,), (13.5,))
+    np.testing.assert_array_equal(result.mean, ((12.0,), (13.5,)))
     assert result.plausibility == ConditionPlausibility(equality_log_density=-1.27)
     assert len(transport.payloads) == 1
     sent = transport.payloads[0]
@@ -667,10 +670,13 @@ def test_batched_condition_samples_merge_into_one_conditional_answer() -> None:
     )
 
     assert isinstance(result, SampleForecastResult)
-    assert result.samples == (
-        ((-1.0,), (0.0,)),
-        ((-1.0,), (1.0,)),
-        ((-1.0,), (2.0,)),
+    np.testing.assert_array_equal(
+        result.samples,
+        (
+            ((-1.0,), (0.0,)),
+            ((-1.0,), (1.0,)),
+            ((-1.0,), (2.0,)),
+        ),
     )
     assert result.query_times == (2, 3)
     assert result.diagnostics.condition_draws == 3

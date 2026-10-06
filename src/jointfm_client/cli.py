@@ -32,6 +32,11 @@ from jointfm_client.configuration import (
 )
 from jointfm_client.contract import ReturnMode, TimeIndexMode
 from jointfm_client.exceptions import JointFMError, JointFMResponseError
+from jointfm_client.transport import JointFMRetryConfig
+from jointfm_client.utilization import (
+    DEFAULT_UTILIZATION_SEED,
+    run_max_utilization_check,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -128,6 +133,22 @@ def _build_parser() -> argparse.ArgumentParser:
     forecast_parser.add_argument("--seed", type=int)
     forecast_parser.set_defaults(handler=_forecast_csv_command)
 
+    utilization_parser = subparsers.add_parser(
+        "max-utilization",
+        help=(
+            "Send the largest advertised sample forecast and print a PASS/FAIL "
+            "verdict with wall-clock times; exits 1 on FAIL."
+        ),
+    )
+    _add_dotenv_arguments(utilization_parser)
+    utilization_parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_UTILIZATION_SEED,
+        help="Seed for the synthetic history and the forecast sampling.",
+    )
+    utilization_parser.set_defaults(handler=_max_utilization_command)
+
     return parser
 
 
@@ -157,6 +178,11 @@ def _health_command(args: argparse.Namespace, stdout: TextIO) -> int:
                 "available": entry.metadata is not None,
                 "max_sample_count": (
                     None if entry.metadata is None else entry.metadata.max_sample_count
+                ),
+                "max_concurrent_requests": (
+                    None
+                    if entry.metadata is None
+                    else entry.metadata.max_concurrent_requests
                 ),
                 "error": entry.error,
             }
@@ -212,6 +238,16 @@ def _forecast_csv_command(args: argparse.Namespace, stdout: TextIO) -> int:
     args.output_file.parent.mkdir(parents=True, exist_ok=True)
     output_frame.to_csv(args.output_file, index=False)
     return 0
+
+
+def _max_utilization_command(args: argparse.Namespace, stdout: TextIO) -> int:
+    client = JointFMClient.from_env(
+        dotenv_path=_dotenv_path(args),
+        retry_config=JointFMRetryConfig(max_attempts=1),
+    )
+    report = run_max_utilization_check(client, seed=args.seed)
+    stdout.write("\n".join(report.format_lines()) + "\n")
+    return 0 if report.passed else 1
 
 
 def _dotenv_path(args: argparse.Namespace) -> Path | None:
