@@ -11,7 +11,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-09-21T15:43:31.133873626Z"
+exclude-newer = "2026-09-22T09:05:45.954684087Z"
 exclude-newer-span = "P14D"
 
 [[package]]
@@ -593,7 +593,7 @@ wheels = [
 
 [[package]]
 name = "jointfm-client"
-version = "0.9.0"
+version = "0.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
