@@ -132,7 +132,7 @@ All SDK-specific exceptions inherit from `JointFMError`.
 | `DATAROBOT_ENDPOINT` | Hosted calls | HTTPS DataRobot API v2 endpoint, normalized without a trailing slash and required to end in `/api/v2`. |
 | `DATAROBOT_API_TOKEN` | Hosted calls | Non-empty, whitespace-free API token used in the hosted bearer authorization header. |
 | `JOINTFM_SCHEMA_VERSION` | Hosted calls | Request schema pin. The SDK supports only `v5`. |
-| `JOINTFM_MODEL_VERSION` | Hosted calls | Exact JointFM deployment model version expected from the service-health payload and prediction responses. |
+| `JOINTFM_MODEL_VERSION` | Optional | Exact JointFM deployment model version expected from the service-health payload and prediction responses. When unset, the SDK discovers the version from the service-health payload on first use; when set, a mismatch is a hard compatibility error. |
 | `JOINTFM_DEPLOYMENT_ID` | One selector | Deployment ID used to build hosted health and prediction URLs. |
 | `JOINTFM_DEPLOYMENT_IDS` | One selector | Comma-separated hosted deployment IDs for round-robin load balancing (at least two unique IDs). Mutually exclusive with other selectors. Peers must share `model_version` and `checkpoint_version`. `health()` uses the minimum reachable `max_sample_count` as the sample-batch cap; `health_instances()` sums reachable caps, one request per instance, and reports topology. Sample forecasts are split evenly across all reachable instances. |
 | `JOINTFM_DEPLOYMENT_URL` | One selector | Hosted deployment URL; the SDK derives the `/predictionsUnstructured` route from it and reuses that route for health probes. |

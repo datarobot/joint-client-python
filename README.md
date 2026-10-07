@@ -118,7 +118,7 @@ The SDK still decodes hosted prediction responses as JSON; the broad `Accept` va
 
 Direct local URL helpers are used by the local service selector: `build_local_health_url("http://localhost:8080")` returns `/healthz`, and `build_local_predict_url("http://localhost:8080")` returns `/predict`.
 
-Hosted settings also derive `health_url` from the resolved deployment URL as `deployments/{deployment_id}/healthz`. `JointFMClient.health(cache=True)` stores typed `HealthMetadata` only when the caller asks for caching, and `JointFMClient.refresh_health()` fetches a fresh copy.
+Hosted deployments are probed through the prediction route: `health()` POSTs `{"request_type": "health"}` to the resolved `predict_url`, because the DataRobot deployment gateway proxies only the unstructured prediction route. `JointFMClient.health(cache=True)` stores typed `HealthMetadata` only when the caller asks for caching, and `JointFMClient.refresh_health()` fetches a fresh copy.
 
 Each endpoint's health payload describes only that endpoint. With `JOINTFM_DEPLOYMENT_IDS`, the client probes every configured peer and aggregates locally: `health()` returns consensus metadata whose `max_sample_count` is the **minimum** reachable cap (the sample-batch size), while `health_instances()` returns one `InstanceHealth` per configured ID plus the **sum** of reachable caps (one request per instance; each instance's `max_concurrent_requests` says how many such requests it serves at once), a compact `topology` / `topology_label` (for example `2x5000` or `1x7000, 1x3000`), and errors for unavailable peers.
 
