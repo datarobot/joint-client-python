@@ -38,8 +38,12 @@ from jointfm_client import (
 )
 
 _MODEL_VERSION = "jointfm-inference:0.3.0+ckpt.sdk-test"
-_PRIMARY = "https://app.datarobot.com/api/v2/deployments/primary-id/predictionsUnstructured"
-_BACKUP = "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+_PRIMARY = (
+    "https://app.datarobot.com/api/v2/deployments/primary-id/predictionsUnstructured"
+)
+_BACKUP = (
+    "https://app.datarobot.com/api/v2/deployments/backup-id/predictionsUnstructured"
+)
 _QUERY_TIMES = [2, 3]
 _SEED = 7
 
