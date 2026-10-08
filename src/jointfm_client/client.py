@@ -17,8 +17,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
+from itertools import accumulate
 from pathlib import Path
 import re
 from typing import Any, Self, cast
@@ -868,24 +869,21 @@ class JointFMClient:
             _set_batch_seed(batch_payload, batch_index)
             batch_payloads.append(batch_payload)
 
+        merger = _SampleBatchMerger(payload, batch_sizes)
         if self._uses_pool() and len(batch_payloads) > 1:
-            batch_results = self._forecast_sample_batches_parallel(batch_payloads)
+            self._forecast_sample_batches_parallel(batch_payloads, merger)
         else:
-            batch_results = [
-                self._sample_forecast_from_batch_payload(batch_payload)
-                for batch_payload in batch_payloads
-            ]
-
-        try:
-            return _merge_sample_forecast_results(batch_results, payload)
-        except ValueError as error:
-            raise JointFMServiceError(
-                f"JointFM forecast response violated the service contract: {error}"
-            ) from error
+            for batch_index, batch_payload in enumerate(batch_payloads):
+                merger.add(
+                    batch_index, self._sample_forecast_from_batch_payload(batch_payload)
+                )
+        return merger.result()
 
     def _forecast_sample_batches_parallel(
-        self, batch_payloads: Sequence[Mapping[str, Any]]
-    ) -> list[SampleForecastResult]:
+        self,
+        batch_payloads: Sequence[Mapping[str, Any]],
+        merger: _SampleBatchMerger,
+    ) -> None:
         pool = self._require_pool()
         # Batches beyond the peer count queue on the per-peer POST lock, so no
         # peer ever serves two of this client's batches at once.
@@ -899,12 +897,15 @@ class JointFMClient:
             return self._sample_forecast_from_response(response_payload, batch_payload)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            return list(
-                executor.map(
-                    _run_batch,
-                    enumerate(batch_payloads),
-                )
-            )
+            batch_indexes = {
+                executor.submit(_run_batch, item): item[0]
+                for item in enumerate(batch_payloads)
+            }
+            # A finished future holds its batch, so each one is copied and
+            # dropped as it lands instead of waiting for the slowest peer.
+            for future in as_completed(batch_indexes):
+                merger.add(batch_indexes.pop(future), future.result())
+                del future
 
     def _sample_forecast_from_batch_payload(
         self, batch_payload: Mapping[str, Any]
@@ -1244,90 +1245,139 @@ def _set_batch_seed(batch_payload: dict[str, Any], batch_index: int) -> None:
     batch_payload["seed"] = seed + batch_index
 
 
-def _merge_sample_forecast_results(
-    batch_results: Sequence[SampleForecastResult],
-    request_payload: Mapping[str, Any],
-) -> SampleForecastResult:
-    if not batch_results:
-        raise ValueError("sample batching produced no responses")
+class _SampleBatchMerger:
+    """Copy sample batches into one merged array as they arrive.
 
-    first_result = batch_results[0]
-    _validate_sample_batch_results(batch_results, first_result)
-    merged_samples = np.concatenate(
-        [batch_result.samples for batch_result in batch_results], axis=0
-    )
-    merged_samples.flags.writeable = False
-    requested_samples = cast(int, request_payload["n_samples"])
-    if len(merged_samples) != requested_samples:
-        raise ValueError(
-            "sample batching produced the wrong sample count: "
-            f"expected {requested_samples}, got {len(merged_samples)}"
+    The merged array is allocated once, when the first batch arrives, and batch
+    ``i`` fills the rows its position in ``batch_sizes`` reserves, so the result
+    does not depend on the order batches arrive in. The merger keeps no batch's
+    samples after copying them, so each batch can be freed at once instead of
+    every batch staying alive next to the merged copy.
+    """
+
+    def __init__(
+        self, request_payload: Mapping[str, Any], batch_sizes: Sequence[int]
+    ) -> None:
+        self._request_payload = request_payload
+        self._row_offsets = tuple(accumulate(batch_sizes, initial=0))
+        self._requested_samples = cast(int, request_payload["n_samples"])
+        # The first batch's metadata, holding the merged array as its samples.
+        self._template: SampleForecastResult | None = None
+        self._merged_rows = 0
+
+    def add(self, batch_index: int, batch_result: SampleForecastResult) -> None:
+        """Validate one batch against the first and copy it into its rows."""
+        try:
+            self._add(batch_index, batch_result)
+        except ValueError as error:
+            raise _sample_batch_contract_error(error) from error
+
+    def result(self) -> SampleForecastResult:
+        """Return the merged result once every batch has been added."""
+        try:
+            return self._result()
+        except ValueError as error:
+            raise _sample_batch_contract_error(error) from error
+
+    def _add(self, batch_index: int, batch_result: SampleForecastResult) -> None:
+        batch_samples = batch_result.samples
+        if self._template is None:
+            merged_samples = np.empty(
+                (self._requested_samples, *batch_samples.shape[1:]),
+                dtype=batch_samples.dtype,
+            )
+            self._template = replace(batch_result, samples=merged_samples)
+        else:
+            _validate_sample_batch_result(batch_result, self._template)
+        rows = self._template.samples[
+            self._row_offsets[batch_index] : self._row_offsets[batch_index + 1]
+        ]
+        # Assignment would broadcast a smaller batch over its rows unnoticed.
+        if batch_samples.shape != rows.shape:
+            raise ValueError(
+                f"sample batch {batch_index} shape mismatch: "
+                f"expected {rows.shape}, got {batch_samples.shape}"
+            )
+        rows[...] = batch_samples
+        self._merged_rows += len(rows)
+
+    def _result(self) -> SampleForecastResult:
+        first_result = self._template
+        if first_result is None:
+            raise ValueError("sample batching produced no responses")
+        request_payload = self._request_payload
+        merged_samples = first_result.samples
+        merged_samples.flags.writeable = False
+        requested_samples = self._requested_samples
+        if self._merged_rows != requested_samples:
+            raise ValueError(
+                "sample batching produced the wrong sample count: "
+                f"expected {requested_samples}, got {self._merged_rows}"
+            )
+
+        seed = request_payload.get("seed")
+        diagnostics_seed = (
+            seed if isinstance(seed, int) and not isinstance(seed, bool) else None
+        )
+        return SampleForecastResult(
+            schema_version=first_result.schema_version,
+            image_version=first_result.image_version,
+            model_version=first_result.model_version,
+            checkpoint_version=first_result.checkpoint_version,
+            head=first_result.head,
+            query_mode=first_result.query_mode,
+            return_mode=first_result.return_mode,
+            query_times=first_result.query_times,
+            requested_columns=first_result.requested_columns,
+            diagnostics=ForecastDiagnostics(
+                history_rows=first_result.diagnostics.history_rows,
+                horizon_count=first_result.diagnostics.horizon_count,
+                seed=diagnostics_seed,
+                condition_draws=(
+                    None
+                    if first_result.diagnostics.condition_draws is None
+                    else len(merged_samples)
+                ),
+                interval_estimator=first_result.diagnostics.interval_estimator,
+            ),
+            # Every batch answers the same request, so what the model thinks of
+            # the conditions does not vary across them; the region probability
+            # reported here is the first batch's estimate of it.
+            plausibility=first_result.plausibility,
+            errors=(),
+            samples=merged_samples,
         )
 
-    seed = request_payload.get("seed")
-    diagnostics_seed = (
-        seed if isinstance(seed, int) and not isinstance(seed, bool) else None
-    )
-    return SampleForecastResult(
-        schema_version=first_result.schema_version,
-        image_version=first_result.image_version,
-        model_version=first_result.model_version,
-        checkpoint_version=first_result.checkpoint_version,
-        head=first_result.head,
-        query_mode=first_result.query_mode,
-        return_mode=first_result.return_mode,
-        query_times=first_result.query_times,
-        requested_columns=first_result.requested_columns,
-        diagnostics=ForecastDiagnostics(
-            history_rows=first_result.diagnostics.history_rows,
-            horizon_count=first_result.diagnostics.horizon_count,
-            seed=diagnostics_seed,
-            condition_draws=(
-                None
-                if first_result.diagnostics.condition_draws is None
-                else len(merged_samples)
-            ),
-            interval_estimator=first_result.diagnostics.interval_estimator,
-        ),
-        # Every batch answers the same request, so what the model thinks of the
-        # conditions does not vary across them; the region probability reported
-        # here is the first batch's estimate of it.
-        plausibility=first_result.plausibility,
-        errors=(),
-        samples=merged_samples,
+
+def _sample_batch_contract_error(error: ValueError) -> JointFMServiceError:
+    return JointFMServiceError(
+        f"JointFM forecast response violated the service contract: {error}"
     )
 
 
-def _validate_sample_batch_results(
-    batch_results: Sequence[SampleForecastResult],
+def _validate_sample_batch_result(
+    batch_result: SampleForecastResult,
     first_result: SampleForecastResult,
 ) -> None:
-    for batch_result in batch_results[1:]:
-        if batch_result.schema_version != first_result.schema_version:
-            raise ValueError("sample batch schema_version mismatch")
-        if batch_result.image_version != first_result.image_version:
-            raise ValueError("sample batch image_version mismatch")
-        if batch_result.model_version != first_result.model_version:
-            raise ValueError("sample batch model_version mismatch")
-        if batch_result.checkpoint_version != first_result.checkpoint_version:
-            raise ValueError("sample batch checkpoint_version mismatch")
-        if batch_result.head != first_result.head:
-            raise ValueError("sample batch head mismatch")
-        if batch_result.query_mode != first_result.query_mode:
-            raise ValueError("sample batch query_mode mismatch")
-        if batch_result.return_mode != first_result.return_mode:
-            raise ValueError("sample batch return_mode mismatch")
-        if batch_result.query_times != first_result.query_times:
-            raise ValueError("sample batch query_times mismatch")
-        if batch_result.requested_columns != first_result.requested_columns:
-            raise ValueError("sample batch requested_columns mismatch")
-        if (
-            batch_result.diagnostics.history_rows
-            != first_result.diagnostics.history_rows
-        ):
-            raise ValueError("sample batch history_rows mismatch")
-        if (
-            batch_result.diagnostics.horizon_count
-            != first_result.diagnostics.horizon_count
-        ):
-            raise ValueError("sample batch horizon_count mismatch")
+    if batch_result.schema_version != first_result.schema_version:
+        raise ValueError("sample batch schema_version mismatch")
+    if batch_result.image_version != first_result.image_version:
+        raise ValueError("sample batch image_version mismatch")
+    if batch_result.model_version != first_result.model_version:
+        raise ValueError("sample batch model_version mismatch")
+    if batch_result.checkpoint_version != first_result.checkpoint_version:
+        raise ValueError("sample batch checkpoint_version mismatch")
+    if batch_result.head != first_result.head:
+        raise ValueError("sample batch head mismatch")
+    if batch_result.query_mode != first_result.query_mode:
+        raise ValueError("sample batch query_mode mismatch")
+    if batch_result.return_mode != first_result.return_mode:
+        raise ValueError("sample batch return_mode mismatch")
+    if batch_result.query_times != first_result.query_times:
+        raise ValueError("sample batch query_times mismatch")
+    if batch_result.requested_columns != first_result.requested_columns:
+        raise ValueError("sample batch requested_columns mismatch")
+    if batch_result.diagnostics.history_rows != first_result.diagnostics.history_rows:
+        raise ValueError("sample batch history_rows mismatch")
+    if batch_result.diagnostics.horizon_count != first_result.diagnostics.horizon_count:
+        raise ValueError("sample batch horizon_count mismatch")
